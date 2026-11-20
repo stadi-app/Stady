@@ -1,0 +1,3279 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Surlign'Atelier Pro — Photo → Fiche, Surlignage & PDF</title>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Google Fonts : Inter, Source Serif 4 & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;0,8..60,700;1,8..60,400&display=swap" rel="stylesheet" />
+
+  <!-- Tesseract.js v5 (Moteur OCR Hors-ligne / Sans clé pour lecture de photos de cours en français) -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+
+  <!-- html2pdf.js (Export direct en fichier PDF A4 propre) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Inter"', 'system-ui', 'sans-serif'],
+            serif: ['"Source Serif 4"', 'Georgia', 'serif'],
+            mono: ['"JetBrains Mono"', 'monospace'],
+          }
+        }
+      }
+    };
+  </script>
+
+  <style>
+    /* ==========================================================================
+       1. VARIABLES & PALETTE STUDIO ÉDITORIAL CHALEUREUX
+       ========================================================================== */
+    :root {
+      --workspace-bg: #FAF9F6;
+      --paper-bg: #FFFFFF;
+      --ink-primary: #1C1917;
+      --ink-secondary: #57534E;
+      --border-warm: #E7E5E4;
+
+      /* Palette des 5 surligneurs */
+      --hl-yellow-bg: #FEF08A;
+      --hl-yellow-border: #EAB308;
+
+      --hl-green-bg: #BBF7D0;
+      --hl-green-border: #22C55E;
+
+      --hl-blue-bg: #BAE6FD;
+      --hl-blue-border: #0EA5E9;
+
+      --hl-pink-bg: #FBCFE8;
+      --hl-pink-border: #EC4899;
+
+      --hl-purple-bg: #E9D5FF;
+      --hl-purple-border: #A855F7;
+
+      --active-sheet-cursor: text;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      background-color: var(--workspace-bg);
+      color: var(--ink-primary);
+      font-family: 'Inter', system-ui, sans-serif;
+      margin: 0;
+    }
+
+    /* ==========================================================================
+       2. STYLES DES SURLIGNAGES (<mark class="hl hl-{couleur}">)
+       ========================================================================== */
+    mark.hl {
+      border-radius: 0.28rem;
+      padding: 0.05em 0.22em;
+      margin: 0 0.02em;
+      color: #0F172A;
+      box-decoration-break: clone;
+      -webkit-box-decoration-break: clone;
+      border-bottom: 2px solid transparent;
+      transition: background-color 0.16s ease, opacity 0.2s ease, outline 0.16s ease;
+    }
+
+    mark.hl-yellow {
+      background-color: var(--hl-yellow-bg);
+      border-bottom-color: var(--hl-yellow-border);
+    }
+
+    mark.hl-green {
+      background-color: var(--hl-green-bg);
+      border-bottom-color: var(--hl-green-border);
+    }
+
+    mark.hl-blue {
+      background-color: var(--hl-blue-bg);
+      border-bottom-color: var(--hl-blue-border);
+    }
+
+    mark.hl-pink {
+      background-color: var(--hl-pink-bg);
+      border-bottom-color: var(--hl-pink-border);
+    }
+
+    mark.hl-purple {
+      background-color: var(--hl-purple-bg);
+      border-bottom-color: var(--hl-purple-border);
+    }
+
+    /* Survol en mode Gomme */
+    body.mode-eraser #sheet-content mark.hl:hover {
+      outline: 2px dashed #EF4444;
+      outline-offset: 1px;
+      background-color: #FEE2E2 !important;
+      border-bottom-color: #EF4444 !important;
+    }
+
+    /* ==========================================================================
+       3. MODE FOCUS PAR COULEUR (ISOLE UNE CATÉGORIE EN ATTÉNUANT LE RESTE)
+       ========================================================================== */
+    #sheet-content.focus-active p,
+    #sheet-content.focus-active li,
+    #sheet-content.focus-active .formula-box {
+      color: #A8A29E;
+      transition: color 0.2s ease;
+    }
+
+    #sheet-content.focus-active mark.hl {
+      opacity: 0.24;
+      filter: grayscale(0.4);
+    }
+
+    #sheet-content.focus-active[data-focus-color="yellow"] mark.hl-yellow,
+    #sheet-content.focus-active[data-focus-color="green"] mark.hl-green,
+    #sheet-content.focus-active[data-focus-color="blue"] mark.hl-blue,
+    #sheet-content.focus-active[data-focus-color="pink"] mark.hl-pink,
+    #sheet-content.focus-active[data-focus-color="purple"] mark.hl-purple {
+      opacity: 1 !important;
+      filter: none !important;
+      box-shadow: 0 1px 4px rgba(15, 23, 42, 0.12);
+    }
+
+    /* ==========================================================================
+       4. MODE TEST MÉMOIRE (CACHE-CACHE / ACTIVE RECALL)
+       ========================================================================== */
+    #sheet-content.recall-mode mark.hl:not(.recall-revealed) {
+      color: transparent !important;
+      user-select: none;
+      cursor: pointer !important;
+      border-radius: 0.35rem;
+      box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.16);
+      background-image: repeating-linear-gradient(
+        -45deg,
+        rgba(255, 255, 255, 0.45),
+        rgba(255, 255, 255, 0.45) 5px,
+        transparent 5px,
+        transparent 10px
+      );
+    }
+
+    #sheet-content.recall-mode mark.hl:not(.recall-revealed):hover {
+      filter: brightness(0.95);
+    }
+
+    #sheet-content.recall-mode mark.hl.recall-revealed {
+      cursor: pointer !important;
+      outline: 1.5px dashed rgba(15, 23, 42, 0.4);
+      outline-offset: 1px;
+    }
+
+    /* Animation de repérage ("Suivant" ou clic depuis la synthèse / recherche) */
+    @keyframes locatePulse {
+      0% {
+        outline: 3px solid #D97706;
+        outline-offset: 3px;
+        box-shadow: 0 0 0 8px rgba(217, 119, 6, 0.25);
+      }
+      100% {
+        outline: 3px solid transparent;
+        outline-offset: 0px;
+        box-shadow: 0 0 0 0 rgba(217, 119, 6, 0);
+      }
+    }
+
+    .hl-locate-flash {
+      animation: locatePulse 1.35s ease-out;
+    }
+
+    /* Surlignage temporaire des résultats de recherche rapide */
+    mark.search-hit {
+      background-color: #FED7AA;
+      color: #7C2D12;
+      border-radius: 0.2rem;
+      padding: 0 0.12em;
+      outline: 1.5px solid #F97316;
+    }
+
+    mark.search-hit.is-current-hit {
+      background-color: #FB923C;
+      color: #FFFFFF;
+      outline: 2px solid #C2410C;
+    }
+
+    /* ==========================================================================
+       5. TROUSSE À PINCEAUX & CURSEUR SVG DYNAMIQUE
+       ========================================================================== */
+    .brush-tool-btn {
+      transition: transform 0.16s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.16s ease, background-color 0.15s ease, border-color 0.15s ease;
+    }
+
+    .brush-tool-btn:hover {
+      transform: translateY(-2px);
+    }
+
+    .brush-tool-btn.is-active {
+      transform: translateY(-3px);
+      box-shadow: 0 8px 18px -4px rgba(28, 25, 23, 0.14), 0 2px 6px -1px rgba(28, 25, 23, 0.08);
+    }
+
+    #sheet-paper.brush-cursor-enabled,
+    #sheet-paper.brush-cursor-enabled #sheet-content {
+      cursor: var(--active-sheet-cursor);
+    }
+
+    body[data-tool="yellow"] #sheet-content ::selection { background: rgba(254, 240, 138, 0.85); color: #0F172A; }
+    body[data-tool="green"] #sheet-content ::selection  { background: rgba(187, 247, 208, 0.85); color: #0F172A; }
+    body[data-tool="blue"] #sheet-content ::selection   { background: rgba(186, 230, 253, 0.85); color: #0F172A; }
+    body[data-tool="pink"] #sheet-content ::selection   { background: rgba(251, 207, 232, 0.85); color: #0F172A; }
+    body[data-tool="purple"] #sheet-content ::selection { background: rgba(233, 213, 255, 0.85); color: #0F172A; }
+    body[data-tool="eraser"] #sheet-content ::selection { background: rgba(254, 202, 202, 0.85); color: #7F1D1D; }
+
+    /* ==========================================================================
+       6. FEUILLE A4 ÉDITORIALE & TYPOGRAPHIE DU COURS
+       ========================================================================== */
+    .a4-sheet {
+      background-color: var(--paper-bg);
+      box-shadow:
+        0 1px 3px rgba(28, 25, 23, 0.04),
+        0 14px 36px -10px rgba(28, 25, 23, 0.08);
+      border: 1px solid var(--border-warm);
+    }
+
+    .sheet-typography {
+      font-family: 'Inter', system-ui, sans-serif;
+    }
+
+    .sheet-typography.font-editorial-serif {
+      font-family: 'Source Serif 4', Georgia, serif;
+    }
+
+    .sheet-typography h1 {
+      font-family: 'Inter', system-ui, sans-serif;
+      font-size: 1.48rem;
+      font-weight: 800;
+      color: #1C1917;
+      letter-spacing: -0.02em;
+      margin-top: 1.6rem;
+      margin-bottom: 0.65rem;
+      padding-bottom: 0.35rem;
+      border-bottom: 2px solid #E7E5E4;
+      scroll-margin-top: 9.5rem;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+
+    .sheet-typography h1:first-child,
+    .sheet-typography h2:first-child {
+      margin-top: 0;
+    }
+
+    .sheet-typography h2 {
+      font-family: 'Inter', system-ui, sans-serif;
+      font-size: 1.24rem;
+      font-weight: 800;
+      color: #1C1917;
+      letter-spacing: -0.015em;
+      margin-top: 1.5rem;
+      margin-bottom: 0.55rem;
+      padding-bottom: 0.3rem;
+      border-bottom: 1.5px solid #E7E5E4;
+      scroll-margin-top: 9.5rem;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+
+    .sheet-typography h3 {
+      font-family: 'Inter', system-ui, sans-serif;
+      font-size: 1.04rem;
+      font-weight: 700;
+      color: #292524;
+      margin-top: 1.15rem;
+      margin-bottom: 0.4rem;
+      scroll-margin-top: 9.5rem;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+
+    .sheet-typography p {
+      font-size: 1.02rem;
+      line-height: 1.78;
+      color: #1C1917;
+      margin-bottom: 0.85rem;
+    }
+
+    .sheet-typography ul {
+      list-style-type: disc;
+      padding-left: 1.5rem;
+      margin-bottom: 0.95rem;
+    }
+
+    .sheet-typography li {
+      font-size: 1.01rem;
+      line-height: 1.74;
+      color: #1C1917;
+      margin-bottom: 0.35rem;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+
+    .sheet-typography .formula-box {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.92rem;
+      background-color: #FAF9F6;
+      border: 1px solid #E7E5E4;
+      border-left: 3.5px solid #0EA5E9;
+      padding: 0.65rem 0.95rem;
+      border-radius: 0.55rem;
+      margin: 0.85rem 0;
+      color: #0F172A;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+
+    #sheet-content[contenteditable="true"] {
+      outline: 2px dashed #D97706;
+      outline-offset: 10px;
+      border-radius: 0.5rem;
+      background-color: #FFFDF9;
+    }
+
+    /* Scrollbar épurée */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #D6D3D1;
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #A8A29E;
+    }
+
+    /* ==========================================================================
+       7. STYLES SPÉCIFIQUES POUR LE RENDU PDF (html2pdf.js) & IMPRESSION
+       ========================================================================== */
+    .pdf-render-sandbox {
+      background: #FFFFFF;
+      color: #1C1917;
+      font-family: 'Inter', system-ui, sans-serif;
+      padding: 12mm 14mm;
+      width: 190mm;
+    }
+
+    .pdf-render-sandbox.pdf-blank-mode mark.hl {
+      background-color: transparent !important;
+      border-bottom-color: transparent !important;
+      padding: 0 !important;
+      margin: 0 !important;
+    }
+
+    .pdf-render-sandbox h1,
+    .pdf-render-sandbox h2,
+    .pdf-render-sandbox h3,
+    .pdf-render-sandbox .formula-box,
+    .pdf-render-sandbox li {
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+
+    @media print {
+      .no-print { display: none !important; }
+      body { background: #FFFFFF !important; }
+      #sheet-paper {
+        box-shadow: none !important;
+        border: none !important;
+        max-width: 100% !important;
+        padding: 0 !important;
+      }
+      mark.hl {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+    }
+  </style>
+</head>
+
+<body class="min-h-screen flex flex-col antialiased" data-tool="yellow">
+
+  <!-- ========================================================================
+       EN-TÊTE STUDIO : IDENTITÉ + ACTIONS RAPIDES + TROUSSE À PINCEAUX
+       ======================================================================== -->
+  <header class="no-print sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-stone-200/90 shadow-2xs">
+    <div class="max-w-[1680px] mx-auto px-3 sm:px-5 py-2.5 flex flex-col gap-2">
+
+      <!-- Rangée 1 : Logo + Boutons principaux (Photo -> Fiche, Nouvelle fiche, Surligner l'essentiel, PDF, Mode IA) -->
+      <div class="flex flex-wrap items-center justify-between gap-2">
+
+        <!-- Gauche : Menu mobile + Identité + Photo -> Fiche + Nouvelle fiche -->
+        <div class="flex items-center gap-2">
+          <button id="btn-open-left-drawer" type="button" title="Mes fiches et sommaire"
+            class="lg:hidden p-2 rounded-xl text-stone-600 hover:bg-stone-100 border border-stone-200 transition">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h12M4 18h16" />
+            </svg>
+          </button>
+
+          <!-- Logo Surlign'Atelier Pro -->
+          <div class="flex items-center gap-2.5 select-none mr-1">
+            <div class="w-9 h-9 rounded-xl bg-stone-900 flex items-center justify-center shadow-xs relative overflow-hidden">
+              <svg class="w-5 h-5 text-amber-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" />
+              </svg>
+              <span class="absolute bottom-0 inset-x-0 h-1 bg-gradient-to-r from-amber-300 via-emerald-300 to-sky-400"></span>
+            </div>
+            <div class="hidden sm:block">
+              <div class="flex items-center gap-1.5">
+                <h1 class="text-sm sm:text-base font-extrabold tracking-tight text-stone-900 leading-none">Surlign'Atelier</h1>
+                <span class="px-1.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider rounded-md bg-amber-100 text-amber-900 border border-amber-300">Pro</span>
+              </div>
+              <p class="text-[11px] font-medium text-stone-500 mt-0.5">Photo → Fiche, Surlignage & PDF</p>
+            </div>
+          </div>
+
+          <!-- Bouton phare : 📷 Photo de cours -->
+          <button id="btn-open-photo-modal" type="button"
+            class="flex items-center gap-1.5 px-3 sm:px-3.5 py-2 rounded-xl bg-stone-900 hover:bg-stone-800 active:scale-[0.99] text-white text-xs sm:text-sm font-bold shadow-xs transition">
+            <span class="text-sm">📷</span>
+            <span>Photo de cours</span>
+          </button>
+
+          <!-- Bouton secondaire : + Nouvelle fiche texte -->
+          <button id="btn-open-text-modal" type="button" title="Coller un cours ou importer un fichier texte"
+            class="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-stone-100 hover:bg-stone-200/80 text-stone-800 border border-stone-200 text-xs sm:text-sm font-bold transition">
+            <svg class="w-4 h-4 text-stone-600 shrink-0" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+            </svg>
+            <span class="hidden md:inline">Nouvelle fiche</span>
+          </button>
+        </div>
+
+        <!-- Droite : Surligner l'essentiel + Densité + Télécharger PDF + Mode IA + Tiroir révision mobile -->
+        <div class="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+
+          <!-- Groupe : ✨ Surligner l'essentiel + sélecteur de densité -->
+          <div class="flex items-center bg-amber-50/90 border border-amber-300/90 rounded-xl p-0.5 shadow-2xs">
+            <button id="btn-auto-highlight-essential" type="button"
+              class="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg bg-amber-400 hover:bg-amber-300 active:scale-[0.99] text-stone-950 text-xs font-extrabold transition">
+              <span>✨</span>
+              <span>Surligner l'essentiel</span>
+            </button>
+            <select id="select-highlight-density" aria-label="Densité du surlignage automatique"
+              class="bg-transparent text-[11px] font-bold text-amber-950 px-2 py-1.5 focus:outline-none cursor-pointer">
+              <option value="25" selected>Essentiel (25 %)</option>
+              <option value="45">Détaillé (45 %)</option>
+            </select>
+          </div>
+
+          <!-- Bouton : 📄 Télécharger PDF -->
+          <button id="btn-open-pdf-modal" type="button"
+            class="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white text-xs font-bold shadow-xs transition">
+            <span>📄</span>
+            <span class="hidden sm:inline">Télécharger PDF</span>
+            <span class="sm:hidden">PDF</span>
+          </button>
+
+          <!-- Bouton discret : ⚙️ Mode IA -->
+          <button id="btn-open-ai-settings" type="button" title="Configurer le moteur IA Vision ou le mode hors-ligne"
+            class="flex items-center gap-1.5 px-2.5 py-2 rounded-xl bg-white hover:bg-stone-100 text-stone-700 border border-stone-200 text-xs font-semibold transition">
+            <span>⚙️</span>
+            <span class="hidden xl:inline">Mode IA</span>
+            <span id="ai-status-dot" class="w-2 h-2 rounded-full bg-emerald-500"></span>
+          </button>
+
+          <!-- Bouton tiroir droit mobile -->
+          <button id="btn-open-right-drawer" type="button" title="Outils de révision et synthèse"
+            class="lg:hidden p-2 rounded-xl text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Rangée 2 : TROUSSE À PINCEAUX MANUELLE + GOMME + ÉDITER + ANNULER / RÉTABLIR / TOUT EFFACER -->
+      <div class="flex items-center justify-between gap-2 pt-1 border-t border-stone-100 overflow-x-auto">
+
+        <!-- Trousse à 5 pinceaux biseautés + Gomme + Éditer -->
+        <div id="pencil-case-toolbar" role="toolbar" aria-label="Trousse à pinceaux surligneurs"
+          class="flex items-center gap-1.5 py-0.5 shrink-0">
+
+          <div id="brush-buttons-group" class="flex items-center gap-1.5 shrink-0"></div>
+
+          <div class="w-[1px] h-6 bg-stone-200 mx-0.5 shrink-0"></div>
+
+          <!-- Gomme (Raccourci E) -->
+          <button id="tool-btn-eraser" type="button" data-tool="eraser"
+            title="Gomme : cliquez sur un surlignage ou balayez pour effacer (Raccourci : E)"
+            class="brush-tool-btn flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white border border-stone-200 text-stone-700 text-xs font-bold shrink-0">
+            <svg class="w-4 h-4 text-rose-500 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M7 21h10M5.5 13.5l7.8-7.8a2.12 2.12 0 013 0l3.2 3.2a2.12 2.12 0 010 3l-7.8 7.8a2 2 0 01-1.41.59H6.91a2 2 0 01-1.41-.59l-1.5-1.5a2.12 2.12 0 010-3l1.5-1.5z" />
+              <path stroke-linecap="round" d="M10.5 8.5l5 5" />
+            </svg>
+            <span>Gomme</span>
+            <kbd class="hidden sm:inline-block px-1.5 py-0.2 text-[10px] font-mono bg-stone-100 text-stone-500 rounded border border-stone-200">E</kbd>
+          </button>
+
+          <!-- Éditer le texte -->
+          <button id="tool-btn-edit" type="button" data-tool="edit"
+            title="Modifier ou compléter le texte directement sur la fiche"
+            class="brush-tool-btn flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white border border-stone-200 text-stone-700 text-xs font-bold shrink-0">
+            <svg class="w-4 h-4 text-amber-600 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+            </svg>
+            <span>Éditer le texte</span>
+          </button>
+        </div>
+
+        <!-- Historique Annuler / Rétablir + Tout effacer -->
+        <div class="flex items-center gap-1.5 shrink-0">
+          <div class="flex items-center bg-stone-100 p-0.5 rounded-xl border border-stone-200">
+            <button id="btn-undo" type="button" disabled title="Annuler (Ctrl+Z)"
+              class="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold text-stone-700 hover:bg-white disabled:opacity-40 disabled:pointer-events-none transition">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
+              </svg>
+              <span class="hidden md:inline">Annuler</span>
+            </button>
+            <div class="w-[1px] h-4 bg-stone-300 mx-0.5"></div>
+            <button id="btn-redo" type="button" disabled title="Rétablir (Ctrl+Y)"
+              class="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold text-stone-700 hover:bg-white disabled:opacity-40 disabled:pointer-events-none transition">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 15l6-6m0 0l-6-6m6 6H9a6 6 0 000 12h3" />
+              </svg>
+              <span class="hidden md:inline">Rétablir</span>
+            </button>
+          </div>
+
+          <button id="btn-clear-all-highlights" type="button" title="Retirer tous les surlignages de cette fiche"
+            class="px-2.5 py-1.5 rounded-xl bg-white hover:bg-rose-50 text-stone-600 hover:text-rose-700 border border-stone-200 hover:border-rose-200 text-xs font-semibold transition">
+            Tout effacer
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ========================================================================
+       ESPACE DE TRAVAIL PRINCIPAL (3 COLONNES : FICHES/SOMMAIRE | A4 | RÉVISION)
+       ======================================================================== -->
+  <div id="workspace-main" class="flex-1 max-w-[1680px] w-full mx-auto flex relative">
+
+    <!-- Backdrop mobile pour tiroirs -->
+    <div id="mobile-drawer-backdrop" class="no-print hidden fixed inset-0 bg-stone-900/40 backdrop-blur-xs z-40 lg:hidden"></div>
+
+    <!-- ======================================================================
+         COLONNE GAUCHE : MES FICHES + RECHERCHE RAPIDE + SOMMAIRE DYNAMIQUE
+         ====================================================================== -->
+    <aside id="left-sidebar"
+      class="no-print fixed lg:sticky top-0 lg:top-[104px] left-0 z-50 lg:z-10 h-screen lg:h-[calc(100vh-104px)] w-72 shrink-0 bg-[#FAF9F6] lg:bg-transparent border-r border-stone-200/80 overflow-y-auto p-4 space-y-4 transform -translate-x-full lg:translate-x-0 transition-transform duration-200">
+
+      <!-- En-tête mobile tiroir gauche -->
+      <div class="flex items-center justify-between lg:hidden pb-2 border-b border-stone-200">
+        <span class="font-extrabold text-sm text-stone-900">Mes fiches & Sommaire</span>
+        <button id="btn-close-left-drawer" type="button" class="p-1.5 rounded-lg text-stone-500 hover:bg-stone-200/60">✕</button>
+      </div>
+
+      <!-- Bloc 1 : Gestion multi-fiches -->
+      <section class="bg-white rounded-2xl p-3.5 border border-stone-200/90 shadow-2xs">
+        <div class="flex items-center justify-between mb-2.5">
+          <h2 class="text-[11px] font-extrabold uppercase tracking-wider text-stone-400">Mes fiches</h2>
+          <span id="sheets-count-pill" class="text-[11px] font-mono font-semibold px-2 py-0.5 rounded-full bg-stone-100 text-stone-600">1</span>
+        </div>
+
+        <div id="sheets-list-container" class="space-y-1.5 max-h-48 overflow-y-auto pr-0.5">
+          <!-- Fiches sauvegardées -->
+        </div>
+      </section>
+
+      <!-- Bloc 2 : Recherche rapide dans le cours -->
+      <section class="bg-white rounded-2xl p-3.5 border border-stone-200/90 shadow-2xs">
+        <h2 class="text-[11px] font-extrabold uppercase tracking-wider text-stone-400 mb-2">Recherche dans le cours</h2>
+        <div class="relative flex items-center">
+          <input id="course-search-input" type="text" placeholder="Mot-clé, formule, date..."
+            class="w-full pl-3 pr-16 py-1.5 rounded-xl bg-stone-50 border border-stone-200 text-xs font-medium text-stone-800 focus:outline-none focus:bg-white focus:border-amber-500 transition" />
+          <div class="absolute right-1.5 flex items-center gap-0.5">
+            <span id="search-hits-counter" class="text-[10px] font-mono text-stone-400 px-1"></span>
+            <button id="btn-search-next" type="button" title="Occurrence suivante"
+              class="hidden px-1.5 py-0.5 rounded bg-stone-200 hover:bg-stone-300 text-stone-700 text-[10px] font-bold">↓</button>
+            <button id="btn-search-clear" type="button" title="Effacer la recherche"
+              class="hidden px-1.5 py-0.5 rounded text-stone-400 hover:text-stone-700 text-xs">✕</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Bloc 3 : Sommaire dynamique cliquable -->
+      <section class="bg-white rounded-2xl p-3.5 border border-stone-200/90 shadow-2xs">
+        <div class="flex items-center justify-between mb-2.5">
+          <h2 class="text-[11px] font-extrabold uppercase tracking-wider text-stone-400">Sommaire dynamique</h2>
+          <span id="toc-count-pill" class="text-[11px] font-mono text-stone-400">0</span>
+        </div>
+
+        <nav id="toc-container" class="space-y-1 max-h-[36vh] overflow-y-auto pr-0.5">
+          <p class="text-xs text-stone-400 italic">Aucun titre détecté.</p>
+        </nav>
+      </section>
+    </aside>
+
+    <!-- ======================================================================
+         COLONNE CENTRALE : FEUILLE A4 DE RÉVISION
+         ====================================================================== -->
+    <main id="center-column" class="flex-1 min-w-0 px-3 sm:px-6 lg:px-8 py-5 sm:py-7">
+
+      <!-- Bandeau contextuel : Mode Édition -->
+      <div id="edit-mode-banner" class="no-print hidden max-w-[820px] mx-auto mb-3.5 px-4 py-2.5 rounded-2xl bg-amber-50 border border-amber-300 flex items-center justify-between gap-3">
+        <div class="flex items-center gap-2 text-xs sm:text-sm text-amber-950">
+          <span class="text-base">✍️</span>
+          <span><strong>Mode édition actif :</strong> corrigez ou complétez votre cours directement, puis reprenez un pinceau.</span>
+        </div>
+        <button id="btn-finish-editing" type="button"
+          class="px-3 py-1.5 rounded-xl bg-stone-900 hover:bg-stone-800 text-white text-xs font-bold shrink-0 transition">
+          Terminer
+        </button>
+      </div>
+
+      <!-- Bandeau contextuel : Mode Focus -->
+      <div id="focus-mode-banner" class="no-print hidden max-w-[820px] mx-auto mb-3.5 px-4 py-2.5 rounded-2xl bg-stone-900 text-white flex items-center justify-between gap-3">
+        <div class="flex items-center gap-2 text-xs sm:text-sm">
+          <span>🎯</span>
+          <span id="focus-mode-label"><strong>Mode Focus actif :</strong> seule la catégorie sélectionnée est mise en évidence.</span>
+        </div>
+        <button id="btn-exit-focus" type="button"
+          class="px-3 py-1 rounded-xl bg-white/15 hover:bg-white/25 text-white text-xs font-bold shrink-0 transition">
+          Tout afficher
+        </button>
+      </div>
+
+      <!-- Bandeau contextuel : Mode Test Mémoire -->
+      <div id="recall-mode-banner" class="no-print hidden max-w-[820px] mx-auto mb-3.5 px-4 py-2.5 rounded-2xl bg-amber-50 border border-amber-300 flex items-center justify-between gap-3">
+        <div class="flex items-center gap-2 text-xs sm:text-sm text-amber-950">
+          <span class="text-base">🧠</span>
+          <span><strong>Test Mémoire (Cache-cache) :</strong> cliquez sur chaque cache rayé pour vérifier votre réponse.</span>
+        </div>
+        <div class="flex items-center gap-1.5 shrink-0">
+          <button id="btn-recall-reveal-all" type="button"
+            class="px-2.5 py-1 rounded-lg bg-white border border-amber-300 text-amber-950 text-xs font-semibold hover:bg-amber-100 transition">
+            Tout révéler
+          </button>
+          <button id="btn-recall-quit" type="button"
+            class="px-2.5 py-1 rounded-lg bg-stone-900 text-white text-xs font-bold hover:bg-stone-800 transition">
+            Quitter
+          </button>
+        </div>
+      </div>
+
+      <!-- FEUILLE A4 CENTRALE -->
+      <article id="sheet-paper" class="a4-sheet brush-cursor-enabled max-w-[820px] mx-auto rounded-2xl px-6 sm:px-12 py-8 sm:py-12 transition-all">
+
+        <!-- En-tête de la fiche (Badge outil actif + Sélecteur police + Titre éditable) -->
+        <header class="pb-5 mb-7 border-b border-stone-200">
+          <div class="no-print flex flex-wrap items-center justify-between gap-2 mb-2.5">
+            <span id="active-tool-pill" class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#FEF08A] text-amber-950 border border-[#EAB308]">
+              🖌️ Pinceau : Essentiel
+            </span>
+
+            <div class="flex items-center gap-2">
+              <button id="btn-toggle-serif" type="button" title="Basculer entre police moderne (Inter) et police livre éditorial (Source Serif 4)"
+                class="px-2 py-0.5 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-600 text-[11px] font-semibold transition">
+                Police : <span id="font-style-label">Moderne</span>
+              </button>
+              <span id="sheet-meta-stats" class="text-xs text-stone-400 font-medium">0 surlignage</span>
+            </div>
+          </div>
+
+          <input id="sheet-title-input" type="text" aria-label="Titre de la fiche"
+            class="w-full text-2xl sm:text-[28px] font-extrabold tracking-tight text-stone-900 bg-transparent focus:outline-none focus:bg-stone-50 rounded-lg px-1 -mx-1 transition" />
+        </header>
+
+        <!-- Corps du cours structuré -->
+        <div id="sheet-content" contenteditable="false" spellcheck="false" class="sheet-typography select-text">
+          <!-- Contenu HTML de la fiche -->
+        </div>
+      </article>
+    </main>
+
+    <!-- ======================================================================
+         COLONNE DROITE : LÉGENDE INTERACTIVE, FOCUS, TEST MÉMOIRE & SYNTHÈSE
+         ====================================================================== -->
+    <aside id="right-sidebar"
+      class="no-print fixed lg:sticky top-0 lg:top-[104px] right-0 z-50 lg:z-10 h-screen lg:h-[calc(100vh-104px)] w-80 xl:w-[345px] shrink-0 bg-[#FAF9F6] lg:bg-transparent border-l border-stone-200/80 overflow-y-auto p-4 space-y-4 transform translate-x-full lg:translate-x-0 transition-transform duration-200">
+
+      <!-- En-tête mobile tiroir droit -->
+      <div class="flex items-center justify-between lg:hidden pb-2 border-b border-stone-200">
+        <span class="font-extrabold text-sm text-stone-900">Repérage & Synthèse</span>
+        <button id="btn-close-right-drawer" type="button" class="p-1.5 rounded-lg text-stone-500 hover:bg-stone-200/60">✕</button>
+      </div>
+
+      <!-- Bloc 1 : Légende interactive des 5 couleurs (Compteurs, Suivant, Focus, Renommer) -->
+      <section class="bg-white rounded-2xl p-3.5 border border-stone-200/90 shadow-2xs">
+        <div class="flex items-center justify-between mb-2.5">
+          <h2 class="text-[11px] font-extrabold uppercase tracking-wider text-stone-400">Repérage & Focus</h2>
+          <span class="text-[10px] text-stone-400">✎ renommer · 👁 focus</span>
+        </div>
+
+        <div id="color-nav-list" class="space-y-1.5">
+          <!-- Lignes par couleur -->
+        </div>
+      </section>
+
+      <!-- Bloc 2 : Outils de révision active -->
+      <section class="bg-white rounded-2xl p-3.5 border border-stone-200/90 shadow-2xs">
+        <h2 class="text-[11px] font-extrabold uppercase tracking-wider text-stone-400 mb-2">Révision active</h2>
+        <div class="grid grid-cols-2 gap-2">
+          <button id="btn-toggle-recall" type="button"
+            class="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-950 border border-amber-300/80 text-xs font-bold transition">
+            <span>🧠</span>
+            <span>Test Mémoire</span>
+          </button>
+
+          <button id="btn-quick-pdf" type="button"
+            class="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-950 border border-emerald-300/80 text-xs font-bold transition">
+            <span>📄</span>
+            <span>Exporter PDF</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- Bloc 3 : Synthèse Express -->
+      <section class="bg-white rounded-2xl p-3.5 border border-stone-200/90 shadow-2xs flex flex-col">
+        <div class="flex items-center justify-between gap-2 mb-2.5">
+          <div>
+            <h2 class="text-[11px] font-extrabold uppercase tracking-wider text-stone-400">Synthèse Express</h2>
+            <p id="synthesis-total-subtitle" class="text-[11px] text-stone-500">0 passage surligné</p>
+          </div>
+          <button id="btn-copy-synthesis" type="button"
+            class="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-stone-900 hover:bg-stone-800 text-white text-[11px] font-bold transition shrink-0">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2" />
+            </svg>
+            <span>Copier</span>
+          </button>
+        </div>
+
+        <div id="synthesis-list-container" class="space-y-3 max-h-[42vh] overflow-y-auto pr-0.5">
+          <!-- Passages surlignés regroupés par couleur -->
+        </div>
+      </section>
+    </aside>
+  </div>
+
+  <!-- ========================================================================
+       MODALE 1 : 📷 PHOTO DE COURS → FICHE STRUCTURÉE (MULTI-PAGES + OCR / IA)
+       ======================================================================== -->
+  <div id="modal-photo-to-sheet" class="no-print hidden fixed inset-0 z-50 bg-stone-900/55 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6">
+    <div class="bg-white w-full max-w-2xl rounded-3xl shadow-2xl border border-stone-200 overflow-hidden flex flex-col max-h-[92vh]">
+
+      <!-- En-tête -->
+      <div class="px-6 py-4 border-b border-stone-200 flex items-center justify-between bg-[#FAF9F6]">
+        <div class="flex items-center gap-2.5">
+          <span class="w-9 h-9 rounded-xl bg-stone-900 text-white flex items-center justify-center text-lg">📷</span>
+          <div>
+            <h2 class="text-base sm:text-lg font-extrabold text-stone-900">Photo de cours → Fiche de révision</h2>
+            <p class="text-xs text-stone-500">Importez une ou plusieurs pages (cahier manuscrit, polycopié, tableau).</p>
+          </div>
+        </div>
+        <button id="btn-close-photo-modal" type="button" class="p-2 rounded-xl text-stone-400 hover:bg-stone-200/70 hover:text-stone-700 transition">✕</button>
+      </div>
+
+      <!-- Corps -->
+      <div class="p-5 sm:p-6 space-y-4 overflow-y-auto">
+
+        <!-- Titre optionnel -->
+        <div>
+          <label for="photo-sheet-title" class="block text-xs font-bold text-stone-700 mb-1">Titre de la fiche <span class="font-normal text-stone-400">(facultatif — détecté automatiquement sinon)</span></label>
+          <input id="photo-sheet-title" type="text" placeholder="Ex: Philosophie — La Conscience et l'Inconscient"
+            class="w-full px-3.5 py-2 rounded-xl border border-stone-300 text-sm font-semibold text-stone-900 focus:outline-none focus:border-amber-500" />
+        </div>
+
+        <!-- Zone de dépôt + Boutons Fichiers & Appareil photo mobile -->
+        <div id="photo-dropzone"
+          class="border-2 border-dashed border-stone-300 hover:border-amber-500 rounded-2xl p-5 text-center bg-[#FAF9F6] transition cursor-pointer">
+          <div class="mx-auto w-11 h-11 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center text-xl mb-2">🖼️</div>
+          <p class="text-sm font-bold text-stone-800">Glissez vos photos de cours ici</p>
+          <p class="text-xs text-stone-500 mt-0.5 mb-3">Formats JPG, PNG, WEBP — Plusieurs pages acceptées</p>
+
+          <div class="flex flex-wrap items-center justify-center gap-2">
+            <label for="input-photo-files"
+              class="cursor-pointer inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-stone-900 hover:bg-stone-800 text-white text-xs font-bold transition">
+              <span>📁 Choisir des photos</span>
+            </label>
+            <input id="input-photo-files" type="file" accept="image/jpeg,image/png,image/webp,image/*" multiple class="hidden" />
+
+            <label for="input-photo-camera"
+              class="cursor-pointer inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-stone-100 text-stone-800 border border-stone-300 text-xs font-bold transition">
+              <span>📸 Prendre une photo</span>
+            </label>
+            <input id="input-photo-camera" type="file" accept="image/*" capture="environment" class="hidden" />
+          </div>
+        </div>
+
+        <!-- Grille des miniatures importées (Page 1, Page 2...) -->
+        <div id="photo-thumbnails-wrapper" class="hidden space-y-2">
+          <div class="flex items-center justify-between">
+            <span id="photo-pages-count" class="text-xs font-extrabold text-stone-700">0 page sélectionnée</span>
+            <button id="btn-clear-photos" type="button" class="text-[11px] font-semibold text-rose-600 hover:underline">Tout retirer</button>
+          </div>
+          <div id="photo-thumbnails-grid" class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <!-- Miniatures générées dynamiquement -->
+          </div>
+        </div>
+
+        <!-- Option : Surligner automatiquement l'essentiel après la retranscription -->
+        <label class="flex items-center gap-2.5 p-3 rounded-xl bg-amber-50/90 border border-amber-200/90 text-xs font-bold text-amber-950 cursor-pointer select-none">
+          <input id="chk-auto-hl-after-ocr" type="checkbox" checked class="w-4 h-4 rounded accent-amber-600" />
+          <span>✨ Surligner automatiquement l'essentiel après la retranscription</span>
+        </label>
+
+        <!-- Barre de progression de retranscription -->
+        <div id="ocr-progress-box" class="hidden p-4 rounded-2xl bg-stone-900 text-white space-y-2">
+          <div class="flex items-center justify-between text-xs font-bold">
+            <span id="ocr-progress-status">Initialisation du moteur de lecture...</span>
+            <span id="ocr-progress-percent" class="font-mono text-amber-300">0 %</span>
+          </div>
+          <div class="w-full h-2 rounded-full bg-stone-700 overflow-hidden">
+            <div id="ocr-progress-bar" class="h-full bg-gradient-to-r from-amber-400 to-emerald-400 transition-all duration-200" style="width: 0%"></div>
+          </div>
+          <p id="ocr-engine-caption" class="text-[11px] text-stone-400">Moteur : IA Vision & Relais OCR Hors-ligne</p>
+        </div>
+      </div>
+
+      <!-- Pied de modale -->
+      <div class="px-6 py-3.5 bg-stone-50 border-t border-stone-200 flex items-center justify-between gap-2">
+        <button id="btn-switch-to-text-modal" type="button" class="text-xs font-semibold text-stone-500 hover:text-stone-800 underline">
+          Ou coller du texte directement
+        </button>
+        <div class="flex items-center gap-2">
+          <button id="btn-cancel-photo-modal" type="button"
+            class="px-4 py-2 rounded-xl text-xs font-bold text-stone-600 hover:bg-stone-200/70 transition">
+            Annuler
+          </button>
+          <button id="btn-start-transcribe" type="button" disabled
+            class="px-5 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 disabled:opacity-40 disabled:pointer-events-none text-stone-950 text-xs sm:text-sm font-extrabold shadow-xs transition">
+            Retranscrire en fiche
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================
+       MODALE 2 : + NOUVELLE FICHE TEXTE / IMPORT .TXT / .MD
+       ======================================================================== -->
+  <div id="modal-new-text-sheet" class="no-print hidden fixed inset-0 z-50 bg-stone-900/55 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6">
+    <div class="bg-white w-full max-w-2xl rounded-3xl shadow-2xl border border-stone-200 overflow-hidden flex flex-col max-h-[90vh]">
+
+      <div class="px-6 py-4 border-b border-stone-200 flex items-center justify-between bg-[#FAF9F6]">
+        <div>
+          <h2 class="text-lg font-extrabold text-stone-900">Nouvelle fiche texte</h2>
+          <p class="text-xs text-stone-500">Collez votre cours ou importez un fichier .txt / .md.</p>
+        </div>
+        <button id="btn-close-text-modal" type="button" class="p-2 rounded-xl text-stone-400 hover:bg-stone-200/70 transition">✕</button>
+      </div>
+
+      <div class="p-6 space-y-4 overflow-y-auto">
+        <div class="flex flex-col sm:flex-row gap-3">
+          <div class="flex-1">
+            <label for="new-sheet-title" class="block text-xs font-bold text-stone-700 mb-1">Titre de la fiche</label>
+            <input id="new-sheet-title" type="text" placeholder="Ex: Droit Constitutionnel — La Ve République"
+              class="w-full px-3.5 py-2 rounded-xl border border-stone-300 text-sm font-semibold text-stone-900 focus:outline-none focus:border-amber-500" />
+          </div>
+
+          <div class="sm:self-end">
+            <label for="import-file-input"
+              class="cursor-pointer inline-flex items-center justify-center gap-1.5 w-full sm:w-auto px-3.5 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-800 border border-stone-300 text-xs font-bold transition">
+              <span>📄 Importer .txt / .md</span>
+            </label>
+            <input id="import-file-input" type="file" accept=".txt,.md,.markdown" class="hidden" />
+          </div>
+        </div>
+
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <label for="new-sheet-raw-text" class="text-xs font-bold text-stone-700">Contenu du cours</label>
+            <button id="btn-fill-demo-text" type="button" class="text-[11px] font-semibold text-amber-700 hover:underline">
+              Remplir avec un exemple
+            </button>
+          </div>
+          <textarea id="new-sheet-raw-text" rows="10"
+            placeholder="Collez votre cours ici... Les titres, listes à puces et formules seront automatiquement structurés."
+            class="w-full px-3.5 py-3 rounded-2xl border border-stone-300 text-sm leading-relaxed text-stone-800 focus:outline-none focus:border-amber-500 resize-y"></textarea>
+        </div>
+
+        <label class="flex items-center gap-2 text-xs font-bold text-stone-700 cursor-pointer select-none">
+          <input id="chk-auto-hl-after-text" type="checkbox" class="w-4 h-4 rounded accent-amber-600" />
+          <span>✨ Surligner automatiquement l'essentiel dès la création</span>
+        </label>
+      </div>
+
+      <div class="px-6 py-3.5 bg-stone-50 border-t border-stone-200 flex items-center justify-end gap-2">
+        <button id="btn-cancel-text-modal" type="button" class="px-4 py-2 rounded-xl text-xs font-bold text-stone-600 hover:bg-stone-200/70">Annuler</button>
+        <button id="btn-create-sheet-submit" type="button"
+          class="px-5 py-2 rounded-xl bg-stone-900 hover:bg-stone-800 text-white text-xs sm:text-sm font-bold shadow-xs transition">
+          Créer la fiche
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================
+       MODALE 3 : 📄 TÉLÉCHARGER LE PDF (AVEC SURLIGNAGES OU VIERGE)
+       ======================================================================== -->
+  <div id="modal-pdf-export" class="no-print hidden fixed inset-0 z-50 bg-stone-900/55 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-stone-200 overflow-hidden">
+      <div class="px-6 py-4 border-b border-stone-200 flex items-center justify-between bg-[#FAF9F6]">
+        <div class="flex items-center gap-2">
+          <span class="text-lg">📄</span>
+          <h2 class="text-base font-extrabold text-stone-900">Télécharger la fiche en PDF</h2>
+        </div>
+        <button id="btn-close-pdf-modal" type="button" class="p-1.5 rounded-xl text-stone-400 hover:bg-stone-200/70">✕</button>
+      </div>
+
+      <div class="p-6 space-y-3">
+        <p class="text-xs text-stone-500 leading-relaxed">
+          Choisissez le format de votre document A4 prêt à imprimer ou à relire sur tablette :
+        </p>
+
+        <button id="btn-download-pdf-colored" type="button"
+          class="w-full p-4 rounded-2xl border-2 border-emerald-500 bg-emerald-50/60 hover:bg-emerald-50 text-left flex items-center justify-between gap-3 transition group">
+          <div>
+            <p class="text-sm font-extrabold text-stone-900">PDF avec surlignages couleur</p>
+            <p class="text-xs text-stone-600 mt-0.5">Inclut la légende des couleurs en en-tête et tous vos surlignages.</p>
+          </div>
+          <span class="px-3 py-1.5 rounded-xl bg-emerald-600 text-white text-xs font-bold shrink-0 group-hover:bg-emerald-700 transition">
+            Télécharger
+          </span>
+        </button>
+
+        <button id="btn-download-pdf-blank" type="button"
+          class="w-full p-4 rounded-2xl border border-stone-200 hover:border-stone-400 bg-white hover:bg-stone-50 text-left flex items-center justify-between gap-3 transition">
+          <div>
+            <p class="text-sm font-extrabold text-stone-900">PDF vierge (sans surlignage)</p>
+            <p class="text-xs text-stone-500 mt-0.5">Fiche propre et structurée pour vous entraîner à surligner sur papier.</p>
+          </div>
+          <span class="px-3 py-1.5 rounded-xl bg-stone-800 text-white text-xs font-bold shrink-0">
+            Télécharger
+          </span>
+        </button>
+
+        <div id="pdf-generating-status" class="hidden pt-2 text-center text-xs font-bold text-emerald-700">
+          ⏳ Génération du fichier PDF A4 en cours...
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================
+       MODALE 4 : ⚙️ MODE IA (GEMINI VISION + RELAIS HORS-LIGNE TESSERACT)
+       ======================================================================== -->
+  <div id="modal-ai-settings" class="no-print hidden fixed inset-0 z-50 bg-stone-900/55 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-stone-200 overflow-hidden">
+      <div class="px-6 py-4 border-b border-stone-200 flex items-center justify-between bg-[#FAF9F6]">
+        <div class="flex items-center gap-2">
+          <span class="text-lg">⚙️</span>
+          <h2 class="text-base font-extrabold text-stone-900">Moteur IA Vision & Retranscription</h2>
+        </div>
+        <button id="btn-close-ai-modal" type="button" class="p-1.5 rounded-xl text-stone-400 hover:bg-stone-200/70">✕</button>
+      </div>
+
+      <div class="p-6 space-y-4">
+        <div>
+          <label class="block text-xs font-bold text-stone-700 mb-1.5">Mode de fonctionnement</label>
+          <select id="select-ai-engine-mode"
+            class="w-full px-3.5 py-2.5 rounded-xl border border-stone-300 text-xs sm:text-sm font-semibold text-stone-900 bg-white focus:outline-none focus:border-amber-500">
+            <option value="auto">Automatique (IA Gemini + Relais Hors-ligne Tesseract)</option>
+            <option value="gemini">IA Gemini uniquement (Vision haute précision)</option>
+            <option value="offline">100 % Hors-ligne (OCR Tesseract.js français sans clé)</option>
+          </select>
+        </div>
+
+        <div class="p-4 rounded-2xl bg-[#FAF9F6] border border-stone-200 space-y-2">
+          <label for="input-gemini-api-key" class="block text-xs font-bold text-stone-800">
+            Clé API Google Gemini <span class="font-normal text-stone-500">(facultative ici, utile sur GitHub Pages)</span>
+          </label>
+          <input id="input-gemini-api-key" type="password" placeholder="AIzaSy..."
+            class="w-full px-3 py-2 rounded-xl border border-stone-300 bg-white text-xs font-mono text-stone-900 focus:outline-none focus:border-amber-500" />
+          <p class="text-[11px] text-stone-500 leading-relaxed">
+            La clé est sauvegardée uniquement dans votre navigateur (<code class="font-mono">localStorage</code>). Sans clé sur GitHub Pages, le site bascule automatiquement sur le lecteur OCR français intégré.
+          </p>
+        </div>
+      </div>
+
+      <div class="px-6 py-3.5 bg-stone-50 border-t border-stone-200 flex items-center justify-end gap-2">
+        <button id="btn-cancel-ai-modal" type="button" class="px-4 py-2 rounded-xl text-xs font-bold text-stone-600 hover:bg-stone-200/70">Fermer</button>
+        <button id="btn-save-ai-settings" type="button" class="px-5 py-2 rounded-xl bg-stone-900 hover:bg-stone-800 text-white text-xs font-bold">Enregistrer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================
+       MODALE 5 : CONFIRMATIONS (SUPPRESSION DE FICHE / EFFACER SURLIGNAGES)
+       ======================================================================== -->
+  <div id="modal-confirm-action" class="no-print hidden fixed inset-0 z-50 bg-stone-900/55 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white w-full max-w-sm rounded-2xl shadow-xl border border-stone-200 p-5">
+      <h3 id="confirm-modal-title" class="text-base font-extrabold text-stone-900 mb-1">Confirmer</h3>
+      <p id="confirm-modal-desc" class="text-xs text-stone-500 mb-4">Êtes-vous sûr ?</p>
+      <div class="flex justify-end gap-2">
+        <button id="btn-confirm-cancel" type="button" class="px-3.5 py-1.5 rounded-xl text-xs font-bold text-stone-600 hover:bg-stone-100">Annuler</button>
+        <button id="btn-confirm-accept" type="button" class="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white">Confirmer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================
+       CONTENEUR DE NOTIFICATIONS TOAST
+       ======================================================================== -->
+  <div id="toast-container" class="no-print fixed bottom-5 right-5 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+  <!-- ========================================================================
+       JAVASCRIPT APPLICATIF COMPLET
+       ======================================================================== -->
+  <script>
+    (function () {
+      'use strict';
+
+      /* ======================================================================
+         1. DÉFINITION DES 5 PINCEAUX & FICHE D'EXEMPLE INITIALE
+         ====================================================================== */
+      const BRUSH_DEFS = [
+        {
+          id: 'yellow',
+          defaultLabel: 'Essentiel',
+          shortcut: '1',
+          fill: '#FEF08A',
+          border: '#EAB308',
+          pillBg: 'bg-[#FEF08A] text-amber-950 border-[#EAB308]'
+        },
+        {
+          id: 'green',
+          defaultLabel: 'Définitions',
+          shortcut: '2',
+          fill: '#BBF7D0',
+          border: '#22C55E',
+          pillBg: 'bg-[#BBF7D0] text-emerald-950 border-[#22C55E]'
+        },
+        {
+          id: 'blue',
+          defaultLabel: 'Formules & Lois',
+          shortcut: '3',
+          fill: '#BAE6FD',
+          border: '#0EA5E9',
+          pillBg: 'bg-[#BAE6FD] text-sky-950 border-[#0EA5E9]'
+        },
+        {
+          id: 'pink',
+          defaultLabel: 'Attention / Pièges',
+          shortcut: '4',
+          fill: '#FBCFE8',
+          border: '#EC4899',
+          pillBg: 'bg-[#FBCFE8] text-pink-950 border-[#EC4899]'
+        },
+        {
+          id: 'purple',
+          defaultLabel: 'Exemples',
+          shortcut: '5',
+          fill: '#E9D5FF',
+          border: '#A855F7',
+          pillBg: 'bg-[#E9D5FF] text-purple-950 border-[#A855F7]'
+        }
+      ];
+
+      const DEMO_SHEET = {
+        title: 'Physique-Chimie — Les Transformations Acide-Base (Terminale)',
+        rawText: `## I. Définitions selon Brønsted
+
+Définition : Un acide au sens de Brønsted est une espèce chimique capable de céder au moins un proton H⁺ lors d'une transformation chimique.
+
+Définition : Une base au sens de Brønsted est une espèce chimique capable de capter au moins un proton H⁺.
+
+Formule : Couple acide/base : AH / A⁻  avec la demi-équation  AH ⇌ A⁻ + H⁺
+
+Attention : Ne pas confondre un acide fort (qui réagit totalement avec l'eau) et un acide faible (dont la transformation avec l'eau est limitée et mène à un équilibre chimique).
+
+## II. Le pH des solutions aqueuses
+
+Règle clé : Le pH d'une solution aqueuse diluée mesure l'activité des ions oxonium H₃O⁺ présents dans la solution.
+
+Formule : pH = -log([H₃O⁺] / c°)   et inversement   [H₃O⁺] = c° × 10^(-pH)   avec c° = 1,0 mol·L⁻¹
+
+- Une solution est acide à 25 °C si son pH < 7,0.
+- Une solution est neutre à 25 °C si son pH = 7,0.
+- Une solution est basique à 25 °C si son pH > 7,0.
+
+Piège fréquent : Lorsque la concentration en ions H₃O⁺ est divisée par 10 (dilution au dixième), le pH d'un acide fort augmente d'exactement 1,0 unité, mais il ne peut jamais dépasser 7,0 !
+
+## III. Applications et exemples concrets
+
+Exemple : L'acide éthanoïque CH₃COOH forme avec l'ion éthanoate CH₃COO⁻ le couple CH₃COOH / CH₃COO⁻ (vinaigre blanc).
+
+Cas pratique : Lors d'un titrage pH-métrique, l'équivalence est atteinte lorsque les réactifs titrant et titré ont été introduits dans les proportions stœchiométriques.`
+      };
+
+      /* ======================================================================
+         2. ÉTAT GLOBAL & PERSISTANCE LOCALSTORAGE
+         ====================================================================== */
+      const STORAGE_KEY = 'surlign_atelier_pro_v1';
+      const AI_SETTINGS_KEY = 'surlign_atelier_pro_ai_v1';
+
+      const state = {
+        sheets: [],
+        activeSheetId: null,
+        colorLabels: {
+          yellow: 'Essentiel',
+          green: 'Définitions',
+          blue: 'Formules & Lois',
+          pink: 'Attention / Pièges',
+          purple: 'Exemples'
+        },
+        activeTool: 'yellow',
+        focusColor: null, // null ou 'yellow' | 'green' | 'blue' | 'pink' | 'purple'
+        recallMode: false,
+        serifFont: false,
+        cycleIndex: { yellow: -1, green: -1, blue: -1, pink: -1, purple: -1 },
+        undoStack: [],
+        redoStack: [],
+        uploadedPhotos: [], // [{ id, name, dataUrl }]
+        aiSettings: {
+          mode: 'auto', // 'auto' | 'gemini' | 'offline'
+          apiKey: ''
+        },
+        confirmCallback: null,
+        searchHits: [],
+        currentSearchIdx: -1
+      };
+
+      function uid(prefix = 'id') {
+        return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+      }
+
+      function getActiveSheet() {
+        return state.sheets.find(s => s.id === state.activeSheetId) || state.sheets[0];
+      }
+
+      function saveWorkspace() {
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify({
+            sheets: state.sheets,
+            activeSheetId: state.activeSheetId,
+            colorLabels: state.colorLabels,
+            serifFont: state.serifFont
+          }));
+        } catch (e) {
+          console.warn('Sauvegarde locale limitée :', e);
+        }
+      }
+
+      function saveAiSettings() {
+        try {
+          localStorage.setItem(AI_SETTINGS_KEY, JSON.stringify(state.aiSettings));
+        } catch (e) {
+          console.warn('Sauvegarde paramètres IA :', e);
+        }
+        updateAiStatusDot();
+      }
+
+      function loadWorkspace() {
+        try {
+          const rawAi = localStorage.getItem(AI_SETTINGS_KEY);
+          if (rawAi) {
+            const parsedAi = JSON.parse(rawAi);
+            state.aiSettings = { ...state.aiSettings, ...parsedAi };
+          }
+        } catch (e) {}
+
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed.sheets) && parsed.sheets.length > 0) {
+              state.sheets = parsed.sheets;
+              state.activeSheetId = parsed.activeSheetId || parsed.sheets[0].id;
+              if (parsed.colorLabels) state.colorLabels = { ...state.colorLabels, ...parsed.colorLabels };
+              if (typeof parsed.serifFont === 'boolean') state.serifFont = parsed.serifFont;
+              return;
+            }
+          }
+        } catch (e) {}
+
+        // Initialiser avec la fiche de démonstration prête à tester
+        const demoHtml = formatRawCourseToHtml(DEMO_SHEET.rawText, true);
+        const firstSheet = {
+          id: uid('sheet'),
+          title: DEMO_SHEET.title,
+          html: demoHtml,
+          updatedAt: Date.now()
+        };
+        state.sheets = [firstSheet];
+        state.activeSheetId = firstSheet.id;
+        saveWorkspace();
+      }
+
+      function updateAiStatusDot() {
+        const dot = document.getElementById('ai-status-dot');
+        if (!dot) return;
+        if (state.aiSettings.mode === 'offline') {
+          dot.className = 'w-2 h-2 rounded-full bg-amber-500';
+        } else {
+          dot.className = 'w-2 h-2 rounded-full bg-emerald-500';
+        }
+      }
+
+      /* ======================================================================
+         3. UTILITAIRES : ÉCHAPPEMENT HTML, TOASTS, CURSEURS SVG, IMAGE COMPRESSION
+         ====================================================================== */
+      function escapeHtml(str) {
+        return String(str)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      }
+
+      function showToast(message) {
+        const container = document.getElementById('toast-container');
+        const el = document.createElement('div');
+        el.className = 'pointer-events-auto px-4 py-2.5 rounded-xl bg-stone-900 text-white text-xs font-semibold shadow-lg border border-stone-700 transition-all duration-200 opacity-0 translate-y-2';
+        el.textContent = message;
+        container.appendChild(el);
+
+        requestAnimationFrame(() => el.classList.remove('opacity-0', 'translate-y-2'));
+        setTimeout(() => {
+          el.classList.add('opacity-0', 'translate-y-2');
+          setTimeout(() => el.remove(), 220);
+        }, 2800);
+      }
+
+      function getBrushCursorCss(fillColor, strokeColor) {
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28">
+          <path d="M4 22 L9 24 L24 9 L19 4 Z" fill="${fillColor}" stroke="#1C1917" stroke-width="1.6" stroke-linejoin="round"/>
+          <path d="M2 26 L4 22 L9 24 L5 27 Z" fill="${strokeColor}" stroke="#1C1917" stroke-width="1.4" stroke-linejoin="round"/>
+          <path d="M16 7 L21 12" stroke="#1C1917" stroke-width="1.5"/>
+        </svg>`;
+        return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 2 26, text`;
+      }
+
+      function getEraserCursorCss() {
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28">
+          <path d="M4 18 L15 7 L22 14 L11 25 L5 25 L3 23 Z" fill="#FDA4AF" stroke="#1C1917" stroke-width="1.6" stroke-linejoin="round"/>
+          <path d="M9 13 L16 20" stroke="#1C1917" stroke-width="1.5"/>
+          <path d="M4 18 L9 13 L16 20 L11 25 L5 25 L3 23 Z" fill="#FFFFFF" stroke="#1C1917" stroke-width="1.6" stroke-linejoin="round"/>
+        </svg>`;
+        return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 4 24, pointer`;
+      }
+
+      /**
+       * Redimensionne proprement une photo importée sur un <canvas> (max 1800px)
+       * afin d'accélérer l'envoi à Gemini Vision ou Tesseract OCR sans perte de netteté.
+       */
+      function normalizeImageFileToDataUrl(file, enhanceContrast = false) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onerror = () => reject(new Error('Lecture image impossible'));
+          reader.onload = () => {
+            const img = new Image();
+            img.onerror = () => reject(new Error('Format image non reconnu'));
+            img.onload = () => {
+              const maxDim = 1800;
+              let { width, height } = img;
+              if (width > maxDim || height > maxDim) {
+                if (width > height) {
+                  height = Math.round((height * maxDim) / width);
+                  width = maxDim;
+                } else {
+                  width = Math.round((width * maxDim) / height);
+                  height = maxDim;
+                }
+              }
+              const canvas = document.createElement('canvas');
+              canvas.width = width;
+              canvas.height = height;
+              const ctx = canvas.getContext('2d');
+              ctx.fillStyle = '#FFFFFF';
+              ctx.fillRect(0, 0, width, height);
+              if (enhanceContrast) {
+                ctx.filter = 'grayscale(100%) contrast(135%) brightness(105%)';
+              }
+              ctx.drawImage(img, 0, 0, width, height);
+              resolve(canvas.toDataURL('image/jpeg', 0.9));
+            };
+            img.src = reader.result;
+          };
+          reader.readAsDataURL(file);
+        });
+      }
+
+      function enhanceDataUrlForOcr(dataUrl) {
+        return new Promise((resolve) => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+            ctx.filter = 'grayscale(100%) contrast(140%) brightness(106%)';
+            ctx.drawImage(img, 0, 0);
+            resolve(canvas.toDataURL('image/png'));
+          };
+          img.onerror = () => resolve(dataUrl);
+          img.src = dataUrl;
+        });
+      }
+
+      /* ======================================================================
+         4. ALGORITHME DE STRUCTURATION ACADÉMIQUE DU TEXTE
+         ====================================================================== */
+      function formatRawCourseToHtml(rawText, smartFormat = true) {
+        const text = (rawText || '').trim();
+        if (!text) {
+          return `<p class="text-stone-400 italic">Feuille vide. Cliquez sur « Éditer le texte » ou « 📷 Photo de cours » pour remplir cette fiche.</p>`;
+        }
+
+        const lines = text.split(/\r?\n/);
+        if (!smartFormat) {
+          return lines
+            .filter(l => l.trim().length > 0)
+            .map(l => `<p>${escapeHtml(l.trim())}</p>`)
+            .join('\n');
+        }
+
+        const out = [];
+        let inList = false;
+        let headingIdx = 0;
+
+        const closeList = () => {
+          if (inList) {
+            out.push('</ul>');
+            inList = false;
+          }
+        };
+
+        const applyInlineStyles = (escaped) => {
+          let res = escaped.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+          // Mettre en gras les préfixes académiques classiques en début de phrase
+          res = res.replace(
+            /^(D[ée]finition|Th[ée]or[èe]me|Loi|Propri[ée]t[ée]|Formule|R[èe]gle(?:\s+cl[ée])?|Attention|Pi[èe]ge(?:\s+fr[ée]quent)?|Exemple|Cas pratique|Application|Remarque)\s*:/i,
+            '<strong>$1 :</strong>'
+          );
+          return res;
+        };
+
+        lines.forEach((rawLine) => {
+          const line = rawLine.trim();
+          if (!line) {
+            closeList();
+            return;
+          }
+
+          // Titre principal (# ..., I. ..., II. ..., Chapitre ...)
+          if (/^#\s+/.test(line) || /^[IVX]+\.\s+/.test(line) || /^(Chapitre|Partie|Titre|Th[èe]me)\s+[0-9IVX]+/i.test(line)) {
+            closeList();
+            const titleText = line.replace(/^#\s+/, '');
+            out.push(`<h2 id="heading-${headingIdx++}">${escapeHtml(titleText)}</h2>`);
+            return;
+          }
+
+          // Sous-titre (## ..., 1. ..., A. ... ou ligne courte MAJUSCULES)
+          const isAllCaps =
+            line.length >= 4 &&
+            line.length <= 72 &&
+            line === line.toUpperCase() &&
+            /[A-ZÀ-Ÿ]/.test(line) &&
+            !/[=→+]/.test(line);
+
+          if (/^##\s+/.test(line) || /^[0-9]+[.)]\s+[A-ZÀ-Ÿ]/.test(line) || /^[A-Z][.)]\s+[A-ZÀ-Ÿ]/.test(line) || isAllCaps) {
+            closeList();
+            const subText = line.replace(/^##\s+/, '');
+            out.push(`<h3 id="heading-${headingIdx++}">${escapeHtml(subText)}</h3>`);
+            return;
+          }
+
+          // Sous-sous-titre (### ...)
+          if (/^###\s+/.test(line)) {
+            closeList();
+            out.push(`<h3 id="heading-${headingIdx++}">${escapeHtml(line.replace(/^###\s+/, ''))}</h3>`);
+            return;
+          }
+
+          // Liste à puces (-, •, *, ▪)
+          if (/^[-•*▪]\s+/.test(line)) {
+            if (!inList) {
+              out.push('<ul>');
+              inList = true;
+            }
+            const item = line.replace(/^[-•*▪]\s+/, '');
+            out.push(`<li>${applyInlineStyles(escapeHtml(item))}</li>`);
+            return;
+          }
+
+          closeList();
+
+          // Encadré formule / équation
+          if (/^(Formule|Équation|Relation)\s*:/i.test(line) || (/[=⇌→]/.test(line) && line.length < 95 && !/\.\s+[A-Z]/.test(line))) {
+            out.push(`<div class="formula-box">${applyInlineStyles(escapeHtml(line))}</div>`);
+            return;
+          }
+
+          out.push(`<p>${applyInlineStyles(escapeHtml(line))}</p>`);
+        });
+
+        closeList();
+        return out.join('\n');
+      }
+
+      /* ======================================================================
+         5. DOUBLE MOTEUR PHOTO → FICHE (GEMINI VISION IA + TESSERACT OCR 'fra')
+         ====================================================================== */
+      async function fetchWithBackoff(url, options, maxRetries = 3) {
+        let delay = 1000;
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+          const response = await fetch(url, options);
+          if (response.ok) return response;
+          if ((response.status === 429 || response.status >= 500) && attempt < maxRetries) {
+            await new Promise(r => setTimeout(r, delay));
+            delay *= 2;
+            continue;
+          }
+          const errText = await response.text().catch(() => '');
+          throw new Error(`HTTP ${response.status}: ${errText.slice(0, 160)}`);
+        }
+      }
+
+      /**
+       * Appel Gemini Vision (`gemini-3-flash-preview`) pour retranscrire 1 à N photos
+       * de cours en français académique structuré (HTML propre + titre suggéré).
+       */
+      async function transcribePhotosWithGemini(photos, customTitle) {
+        const apiKey = (state.aiSettings.apiKey || '').trim();
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+
+        const parts = [
+          {
+            text: `Tu es un assistant pédagogique expert chargé de retranscrire fidèlement des photos de cours d'étudiants en français (manuscrits, polycopiés ou tableaux) en une fiche de révision parfaitement structurée.
+
+RÈGLES STRICTES :
+1. Retranscris fidèlement tout le contenu des ${photos.length} page(s) dans l'ordre exact sans rien inventer ni résumer de façon abusive.
+2. Corrige uniquement les fautes d'orthographe évidentes ou ambiguïtés de lecture manuscrite pour que le français soit clair et naturel.
+3. Structure le résultat en HTML sémantique propre (uniquement les balises <h2>, <h3>, <p>, <ul>, <li>, <strong>, <div class="formula-box">) :
+   - Utilise <h2> pour les grands titres et parties.
+   - Utilise <h3> pour les sous-parties.
+   - Utilise <ul><li> pour les énumérations.
+   - Utilise <strong> pour les notions et mots-clés importants.
+   - Utilise <div class="formula-box"> pour les formules mathématiques, physiques ou chimiques.
+4. Propose un titre clair et concis pour la fiche dans le champ "title"${customTitle ? ` (l'utilisateur a suggéré : "${customTitle}")` : ''}.`
+          }
+        ];
+
+        photos.forEach((photo, idx) => {
+          parts.push({ text: `--- Page ${idx + 1} ---` });
+          const base64 = photo.dataUrl.split(',')[1];
+          parts.push({
+            inlineData: {
+              mimeType: 'image/jpeg',
+              data: base64
+            }
+          });
+        });
+
+        const payload = {
+          contents: [{ role: 'user', parts }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: 'OBJECT',
+              properties: {
+                title: { type: 'STRING' },
+                html: { type: 'STRING' }
+              },
+              required: ['title', 'html']
+            }
+          }
+        };
+
+        const response = await fetchWithBackoff(apiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const result = await response.json();
+        const rawJson = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!rawJson) throw new Error('Réponse IA vide');
+        const parsed = JSON.parse(rawJson);
+
+        // Nettoyage léger des balises autorisées pour garantir un DOM sain
+        const temp = document.createElement('div');
+        temp.innerHTML = parsed.html || '';
+        temp.querySelectorAll('script, style, iframe, object, link').forEach(el => el.remove());
+
+        return {
+          title: (customTitle || parsed.title || 'Fiche issue de photo').trim(),
+          html: temp.innerHTML.trim() || formatRawCourseToHtml(temp.textContent, true),
+          engineUsed: 'IA Vision Gemini'
+        };
+      }
+
+      /**
+       * Moteur Hors-ligne Tesseract.js v5 ('fra') avec barre de progression en temps réel
+       * puis structuration académique française.
+       */
+      async function transcribePhotosWithTesseract(photos, customTitle, onProgress) {
+        if (typeof Tesseract === 'undefined') {
+          throw new Error('Bibliothèque OCR Tesseract indisponible hors connexion.');
+        }
+
+        const pageTexts = [];
+        for (let i = 0; i < photos.length; i++) {
+          onProgress(
+            `Lecture OCR page ${i + 1}/${photos.length} (français)...`,
+            Math.round(((i) / photos.length) * 100)
+          );
+
+          const enhancedUrl = await enhanceDataUrlForOcr(photos[i].dataUrl);
+          const result = await Tesseract.recognize(enhancedUrl, 'fra', {
+            logger: (m) => {
+              if (m.status === 'recognizing text' && typeof m.progress === 'number') {
+                const overall = Math.round(((i + m.progress) / photos.length) * 100);
+                onProgress(`Lecture OCR page ${i + 1}/${photos.length}...`, overall);
+              }
+            }
+          });
+
+          const cleaned = (result?.data?.text || '')
+            .replace(/[ \t]+\n/g, '\n')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+
+          if (cleaned) {
+            pageTexts.push(cleaned);
+          }
+        }
+
+        const combinedText = pageTexts.join('\n\n');
+        if (!combinedText.trim()) {
+          throw new Error('Aucun texte lisible détecté sur les photos. Essayez avec une photo plus nette et bien éclairée.');
+        }
+
+        // Déduire un titre à partir de la première ligne courte si non renseigné
+        const firstLine = combinedText.split('\n').map(l => l.trim()).find(l => l.length >= 4 && l.length <= 75);
+        const finalTitle = (customTitle || firstLine || 'Fiche retranscrite (OCR)').replace(/^#+\s*/, '');
+
+        return {
+          title: finalTitle,
+          html: formatRawCourseToHtml(combinedText, true),
+          engineUsed: 'OCR Français Hors-ligne (Tesseract)'
+        };
+      }
+
+      /* ======================================================================
+         6. MOTEUR DOM DE SURLIGNAGE SANS BUG (TreeWalker + splitText)
+         ====================================================================== */
+      const INLINE_FORMATTING_TAGS = new Set(['STRONG', 'B', 'EM', 'I', 'U', 'S', 'CODE', 'SPAN', 'SUB', 'SUP']);
+
+      function unwrapTextNodeFromHighlights(textNode, rootContainer) {
+        let current = textNode;
+
+        while (current.parentElement && current.parentElement.closest('mark.hl')) {
+          const mark = current.parentElement.closest('mark.hl');
+          if (!rootContainer.contains(mark)) break;
+
+          while (current.parentElement !== mark) {
+            const inlineParent = current.parentElement;
+            if (!inlineParent || !INLINE_FORMATTING_TAGS.has(inlineParent.tagName)) break;
+
+            if (current.previousSibling) {
+              const beforeInline = inlineParent.cloneNode(false);
+              while (inlineParent.firstChild && inlineParent.firstChild !== current) {
+                beforeInline.appendChild(inlineParent.firstChild);
+              }
+              inlineParent.parentNode.insertBefore(beforeInline, inlineParent);
+            }
+
+            if (current.nextSibling) {
+              const afterInline = inlineParent.cloneNode(false);
+              while (current.nextSibling) {
+                afterInline.appendChild(current.nextSibling);
+              }
+              inlineParent.parentNode.insertBefore(afterInline, inlineParent.nextSibling);
+            }
+
+            current = inlineParent;
+          }
+
+          if (current.previousSibling) {
+            const beforeMark = mark.cloneNode(false);
+            while (mark.firstChild && mark.firstChild !== current) {
+              beforeMark.appendChild(mark.firstChild);
+            }
+            mark.parentNode.insertBefore(beforeMark, mark);
+          }
+
+          if (current.nextSibling) {
+            const afterMark = mark.cloneNode(false);
+            while (current.nextSibling) {
+              afterMark.appendChild(current.nextSibling);
+            }
+            mark.parentNode.insertBefore(afterMark, mark.nextSibling);
+          }
+
+          mark.parentNode.replaceChild(current, mark);
+        }
+
+        return current;
+      }
+
+      function normalizeAndMergeHighlights(rootContainer) {
+        const marks = Array.from(rootContainer.querySelectorAll('mark.hl'));
+        marks.forEach((mark) => {
+          if (!mark.parentNode) return;
+          if (mark.textContent.length === 0) {
+            mark.parentNode.removeChild(mark);
+            return;
+          }
+
+          while (
+            mark.nextSibling &&
+            mark.nextSibling.nodeType === Node.ELEMENT_NODE &&
+            mark.nextSibling.matches('mark.hl') &&
+            mark.nextSibling.dataset.hl === mark.dataset.hl
+          ) {
+            const nextMark = mark.nextSibling;
+            while (nextMark.firstChild) {
+              mark.appendChild(nextMark.firstChild);
+            }
+            nextMark.parentNode.removeChild(nextMark);
+          }
+        });
+
+        rootContainer.normalize();
+      }
+
+      function applyToolToSelection(tool) {
+        const sheetContent = document.getElementById('sheet-content');
+        const selection = window.getSelection();
+        if (!sheetContent || !selection || selection.rangeCount === 0) return false;
+
+        const range = selection.getRangeAt(0);
+        if (range.collapsed) return false;
+
+        if (!sheetContent.contains(range.commonAncestorContainer) && !range.intersectsNode(sheetContent)) {
+          selection.removeAllRanges();
+          return false;
+        }
+
+        const safeRange = range.cloneRange();
+        if (!sheetContent.contains(safeRange.startContainer)) {
+          safeRange.setStart(sheetContent, 0);
+        }
+        if (!sheetContent.contains(safeRange.endContainer)) {
+          safeRange.setEnd(sheetContent, sheetContent.childNodes.length);
+        }
+
+        const selectedText = safeRange.toString();
+        if (!selectedText || selectedText.trim().length === 0) {
+          selection.removeAllRanges();
+          return false;
+        }
+
+        const walker = document.createTreeWalker(sheetContent, NodeFilter.SHOW_TEXT, null);
+        const segments = [];
+        let node;
+
+        while ((node = walker.nextNode())) {
+          if (!node.nodeValue || node.nodeValue.length === 0) continue;
+          if (!safeRange.intersectsNode(node)) continue;
+
+          const startOffset = (node === safeRange.startContainer) ? safeRange.startOffset : 0;
+          const endOffset = (node === safeRange.endContainer) ? safeRange.endOffset : node.nodeValue.length;
+          if (startOffset >= endOffset) continue;
+
+          const slice = node.nodeValue.slice(startOffset, endOffset);
+          if (slice.trim().length === 0 && node.parentElement === sheetContent) continue;
+
+          segments.push({ node, startOffset, endOffset });
+        }
+
+        if (segments.length === 0) {
+          selection.removeAllRanges();
+          return false;
+        }
+
+        pushUndoSnapshot();
+
+        segments.forEach(({ node, startOffset, endOffset }) => {
+          let targetNode = node;
+
+          if (endOffset < targetNode.nodeValue.length) {
+            targetNode.splitText(endOffset);
+          }
+          if (startOffset > 0) {
+            targetNode = targetNode.splitText(startOffset);
+          }
+
+          const cleanNode = unwrapTextNodeFromHighlights(targetNode, sheetContent);
+
+          if (tool !== 'eraser') {
+            const mark = document.createElement('mark');
+            mark.className = `hl hl-${tool}`;
+            mark.dataset.hl = tool;
+            cleanNode.parentNode.insertBefore(mark, cleanNode);
+            mark.appendChild(cleanNode);
+          }
+        });
+
+        normalizeAndMergeHighlights(sheetContent);
+        selection.removeAllRanges();
+        commitSheetDomChange();
+        return true;
+      }
+
+      function eraseSingleHighlightElement(markEl) {
+        const sheetContent = document.getElementById('sheet-content');
+        if (!sheetContent || !markEl || !markEl.matches('mark.hl')) return;
+
+        pushUndoSnapshot();
+
+        const targetColor = markEl.dataset.hl;
+        const toUnwrap = [markEl];
+
+        let prev = markEl.previousSibling;
+        while (prev && prev.nodeType === Node.ELEMENT_NODE && prev.matches(`mark.hl[data-hl="${targetColor}"]`)) {
+          toUnwrap.unshift(prev);
+          prev = prev.previousSibling;
+        }
+        let next = markEl.nextSibling;
+        while (next && next.nodeType === Node.ELEMENT_NODE && next.matches(`mark.hl[data-hl="${targetColor}"]`)) {
+          toUnwrap.push(next);
+          next = next.nextSibling;
+        }
+
+        toUnwrap.forEach((m) => {
+          const parent = m.parentNode;
+          if (!parent) return;
+          while (m.firstChild) {
+            parent.insertBefore(m.firstChild, m);
+          }
+          parent.removeChild(m);
+        });
+
+        sheetContent.normalize();
+        commitSheetDomChange();
+      }
+
+      function clearAllHighlightsOnSheet() {
+        const sheetContent = document.getElementById('sheet-content');
+        const marks = Array.from(sheetContent.querySelectorAll('mark.hl'));
+        if (marks.length === 0) {
+          showToast('Aucun surlignage à effacer.');
+          return;
+        }
+        pushUndoSnapshot();
+        marks.forEach((m) => {
+          const parent = m.parentNode;
+          while (m.firstChild) parent.insertBefore(m.firstChild, m);
+          parent.removeChild(m);
+        });
+        sheetContent.normalize();
+        commitSheetDomChange();
+        showToast('🧹 Tous les surlignages ont été effacés.');
+      }
+
+      /* ======================================================================
+         7. SURLIGNAGE AUTOMATIQUE DE L'ESSENTIEL (« ✨ Surligner l'essentiel »)
+            - Densité réglable : Essentiel (25 %) ou Détaillé (45 %)
+            - Double moteur : Gemini IA + Moteur Linguistique Académique Français
+         ====================================================================== */
+      function wrapExactPhraseInDom(rootContainer, exactText, color) {
+        const needle = (exactText || '').trim();
+        if (needle.length < 4) return false;
+
+        // Construire une carte des nœuds texte non encore surlignés et hors titres
+        const walker = document.createTreeWalker(
+          rootContainer,
+          NodeFilter.SHOW_TEXT,
+          {
+            acceptNode(node) {
+              if (!node.nodeValue) return NodeFilter.FILTER_REJECT;
+              const parent = node.parentElement;
+              if (!parent) return NodeFilter.FILTER_REJECT;
+              if (parent.closest('mark.hl')) return NodeFilter.FILTER_REJECT;
+              if (['H1', 'H2', 'H3'].includes(parent.tagName)) return NodeFilter.FILTER_REJECT;
+              return NodeFilter.FILTER_ACCEPT;
+            }
+          }
+        );
+
+        const textNodes = [];
+        let n;
+        while ((n = walker.nextNode())) {
+          textNodes.push(n);
+        }
+
+        // Recherche directe dans un nœud texte ou à cheval sur des nœuds frères d'un même bloc
+        for (const tNode of textNodes) {
+          const idx = tNode.nodeValue.indexOf(needle);
+          if (idx !== -1) {
+            let target = tNode;
+            if (idx + needle.length < target.nodeValue.length) {
+              target.splitText(idx + needle.length);
+            }
+            if (idx > 0) {
+              target = target.splitText(idx);
+            }
+            const mark = document.createElement('mark');
+            mark.className = `hl hl-${color}`;
+            mark.dataset.hl = color;
+            target.parentNode.insertBefore(mark, target);
+            mark.appendChild(target);
+            return true;
+          }
+        }
+        return false;
+      }
+
+      /**
+       * Moteur linguistique académique français intégré :
+       * Évalue chaque phrase selon les 5 catégories sémantiques et sélectionne
+       * les passages les plus pertinents selon la densité demandée (25 % ou 45 %).
+       */
+      function runAcademicLinguisticHighlight(densityPercent) {
+        const sheetContent = document.getElementById('sheet-content');
+        const candidates = [];
+
+        const walker = document.createTreeWalker(
+          sheetContent,
+          NodeFilter.SHOW_TEXT,
+          {
+            acceptNode(node) {
+              if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+              const parent = node.parentElement;
+              if (!parent) return NodeFilter.FILTER_REJECT;
+              if (parent.closest('mark.hl')) return NodeFilter.FILTER_REJECT;
+              if (['H1', 'H2', 'H3'].includes(parent.tagName)) return NodeFilter.FILTER_REJECT;
+              return NodeFilter.FILTER_ACCEPT;
+            }
+          }
+        );
+
+        const textNodes = [];
+        let n;
+        while ((n = walker.nextNode())) textNodes.push(n);
+
+        const totalChars = textNodes.reduce((acc, tn) => acc + tn.nodeValue.trim().length, 0);
+        if (totalChars === 0) return 0;
+
+        const targetCharBudget = Math.max(80, Math.round(totalChars * (densityPercent / 100)));
+
+        // Scorer chaque phrase dans chaque nœud texte
+        textNodes.forEach((tNode, nodeOrder) => {
+          const raw = tNode.nodeValue;
+          const sentences = raw.match(/[^.!?\n]+(?:[.!?]+(?=\s|$)|$)/g) || [raw];
+          let cursor = 0;
+
+          sentences.forEach((sent) => {
+            const start = raw.indexOf(sent, cursor);
+            cursor = start + sent.length;
+            const trimmed = sent.trim();
+            if (trimmed.length < 8) return;
+
+            const scores = { yellow: 0, green: 0, blue: 0, pink: 0, purple: 0 };
+
+            // 1. Rose : Attention / Pièges / Exceptions
+            if (/\b(attention|pi[èe]ge|ne pas confondre|exception|uniquement si|jamais|toujours|contrairement|mais il ne peut|sans\s+O₂)\b/i.test(trimmed)) {
+              scores.pink += 95;
+            }
+
+            // 2. Vert : Définitions
+            if (/\b(d[ée]finition|est d[ée]fini par|on appelle|d[ée]signe|correspond [àa]|se d[ée]finit comme|est une esp[èe]ce|est la mol[ée]cule|est le processus)\b/i.test(trimmed) ||
+                /^[A-ZÀ-Ÿ][A-Za-zÀ-ÿ0-9\s'’()-]{2,35}\s*:\s+/.test(trimmed)) {
+              scores.green += 92;
+            }
+
+            // 3. Bleu : Formules, lois, théorèmes & règles de calcul
+            if (/\b(formule|th[ée]or[èe]me|loi|r[èe]gle(?:\s+cl[ée])?|propri[ée]t[ée]|[ée]quation|bilan net|proportions stœchiom[ée]triques)\b/i.test(trimmed) ||
+                /[=⇌→≈≤≥]/.test(trimmed) ||
+                /\b\d+(?:[.,]\d+)?\s*(mol|ATP|kJ|°C|unité|unités)\b/i.test(trimmed)) {
+              scores.blue += 90;
+            }
+
+            // 4. Violet : Exemples & applications
+            if (/\b(par exemple|exemple|ex\s*:|application|cas pratique|illustration)\b/i.test(trimmed)) {
+              scores.purple += 84;
+            }
+
+            // 5. Jaune : Notions essentielles, conclusions & idées clés
+            if (/\b(donc|ainsi|par cons[ée]quent|principe|retenir|essentiel|fondamental|en r[ée]sum[ée]|mesure l'activit[ée])\b/i.test(trimmed)) {
+              scores.yellow += 82;
+            } else if (trimmed.length >= 25 && trimmed.length <= 160) {
+              scores.yellow += 35;
+            }
+
+            // Trouver la catégorie gagnante
+            let bestColor = 'yellow';
+            let bestScore = 0;
+            for (const [col, sc] of Object.entries(scores)) {
+              if (sc > bestScore) {
+                bestScore = sc;
+                bestColor = col;
+              }
+            }
+
+            if (bestScore >= 35) {
+              const leadSpaces = sent.match(/^\s*/)[0].length;
+              const trailSpaces = sent.match(/\s*$/)[0].length;
+              candidates.push({
+                tNode,
+                startOffset: start + leadSpaces,
+                endOffset: start + sent.length - trailSpaces,
+                length: trimmed.length,
+                color: bestColor,
+                score: bestScore,
+                order: nodeOrder * 1000 + start
+              });
+            }
+          });
+        });
+
+        // Trier par pertinence décroissante et sélectionner jusqu'au budget de densité (25% ou 45%)
+        candidates.sort((a, b) => b.score - a.score);
+        const chosen = [];
+        let usedChars = 0;
+
+        for (const cand of candidates) {
+          if (usedChars >= targetCharBudget && chosen.length >= 2) break;
+          chosen.push(cand);
+          usedChars += cand.length;
+        }
+
+        if (chosen.length === 0) return 0;
+
+        // Appliquer de la fin vers le début dans le DOM pour préserver les offsets de splitText
+        chosen.sort((a, b) => b.order - a.order);
+
+        chosen.forEach(({ tNode, startOffset, endOffset, color }) => {
+          if (!tNode.parentNode || startOffset >= endOffset) return;
+          let target = tNode;
+          if (endOffset < target.nodeValue.length) {
+            target.splitText(endOffset);
+          }
+          if (startOffset > 0) {
+            target = target.splitText(startOffset);
+          }
+          const mark = document.createElement('mark');
+          mark.className = `hl hl-${color}`;
+          mark.dataset.hl = color;
+          target.parentNode.insertBefore(mark, target);
+          mark.appendChild(target);
+        });
+
+        normalizeAndMergeHighlights(sheetContent);
+        return chosen.length;
+      }
+
+      async function highlightEssentialOnSheet() {
+        const sheetContent = document.getElementById('sheet-content');
+        const btn = document.getElementById('btn-auto-highlight-essential');
+        const density = parseInt(document.getElementById('select-highlight-density').value, 10) || 25;
+
+        if (!sheetContent || !sheetContent.textContent.trim()) {
+          showToast('La fiche est vide.');
+          return;
+        }
+
+        if (state.activeTool === 'edit') selectTool('yellow');
+        if (state.recallMode) toggleRecallMode(false);
+
+        pushUndoSnapshot();
+
+        const originalBtnHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = `<span class="animate-spin inline-block">⏳</span><span>Analyse...</span>`;
+
+        let appliedCount = 0;
+
+        try {
+          // Si mode IA actif, tenter d'abord l'extraction sémantique précise via Gemini
+          if (state.aiSettings.mode !== 'offline') {
+            try {
+              const apiKey = (state.aiSettings.apiKey || '').trim();
+              const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+              const plainCourse = sheetContent.innerText.slice(0, 12000);
+
+              const prompt = `Analyse ce cours en français et sélectionne environ ${density}% du texte correspondant aux passages les plus utiles pour réviser.
+Retourne UNIQUEMENT des extraits EXACTS (copiés mot pour mot depuis le texte ci-dessous, sans modifier la ponctuation ni les majuscules) classés selon ces 5 couleurs :
+- "yellow" : notions essentielles, idées clés, conclusions
+- "green" : définitions
+- "blue" : formules, théorèmes, lois, règles de calcul
+- "pink" : points d'attention, pièges, exceptions
+- "purple" : exemples et applications concrètes
+
+TEXTE DU COURS :
+${plainCourse}`;
+
+              const payload = {
+                contents: [{ role: 'user', parts: [{ text: prompt }] }],
+                generationConfig: {
+                  responseMimeType: 'application/json',
+                  responseSchema: {
+                    type: 'ARRAY',
+                    items: {
+                      type: 'OBJECT',
+                      properties: {
+                        exactText: { type: 'STRING' },
+                        color: { type: 'STRING', enum: ['yellow', 'green', 'blue', 'pink', 'purple'] }
+                      },
+                      required: ['exactText', 'color']
+                    }
+                  }
+                }
+              };
+
+              const res = await fetchWithBackoff(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+              }, 1);
+
+              const data = await res.json();
+              const jsonStr = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+              if (jsonStr) {
+                const items = JSON.parse(jsonStr);
+                if (Array.isArray(items)) {
+                  items.forEach((item) => {
+                    if (wrapExactPhraseInDom(sheetContent, item.exactText, item.color)) {
+                      appliedCount++;
+                    }
+                  });
+                  normalizeAndMergeHighlights(sheetContent);
+                }
+              }
+            } catch (iaErr) {
+              // Relais silencieux vers le moteur linguistique français intégré
+              appliedCount = 0;
+            }
+          }
+
+          // Relais ou mode hors-ligne : moteur linguistique académique français
+          if (appliedCount === 0) {
+            appliedCount = runAcademicLinguisticHighlight(density);
+          }
+
+          commitSheetDomChange();
+
+          if (appliedCount > 0) {
+            showToast(`✨ ${appliedCount} passage${appliedCount > 1 ? 's' : ''} essentiel${appliedCount > 1 ? 's' : ''} surligné${appliedCount > 1 ? 's' : ''} (${density} %) !`);
+          } else {
+            state.undoStack.pop();
+            updateUndoRedoButtons();
+            showToast('Les passages clés de cette fiche sont déjà surlignés.');
+          }
+        } finally {
+          btn.disabled = false;
+          btn.innerHTML = originalBtnHtml;
+        }
+      }
+
+      /* ======================================================================
+         8. EXPORT PDF DIRECT & PROPRE (html2pdf.js)
+         ====================================================================== */
+      async function exportSheetToPdf(includeHighlights = true) {
+        const sheet = getActiveSheet();
+        const sheetContent = document.getElementById('sheet-content');
+        const statusEl = document.getElementById('pdf-generating-status');
+        if (!sheet || !sheetContent) return;
+
+        statusEl.classList.remove('hidden');
+
+        // Construire un conteneur A4 propre et dédié au rendu PDF
+        const sandbox = document.createElement('div');
+        sandbox.className = `pdf-render-sandbox ${includeHighlights ? '' : 'pdf-blank-mode'}`;
+
+        const todayFr = new Date().toLocaleDateString('fr-FR', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric'
+        });
+
+        const legendHtml = includeHighlights
+          ? `<div style="display:flex;flex-wrap:wrap;gap:8px 16px;padding:8px 12px;margin-bottom:16px;background:#FAF9F6;border:1px solid #E7E5E4;border-radius:8px;font-size:11px;">
+              ${BRUSH_DEFS.map(b => {
+                const lbl = state.colorLabels[b.id] || b.defaultLabel;
+                return `<span style="display:inline-flex;align-items:center;gap:5px;">
+                  <span style="display:inline-block;width:11px;height:11px;border-radius:3px;background:${b.fill};border:1px solid ${b.border};"></span>
+                  <strong>${escapeHtml(lbl)}</strong>
+                </span>`;
+              }).join('')}
+            </div>`
+          : '';
+
+        // Cloner le contenu en retirant d'éventuelles classes temporaires (recall-mode, search-hit)
+        const contentClone = sheetContent.cloneNode(true);
+        contentClone.querySelectorAll('mark.search-hit').forEach((m) => {
+          const p = m.parentNode;
+          while (m.firstChild) p.insertBefore(m.firstChild, m);
+          p.removeChild(m);
+        });
+        contentClone.normalize();
+
+        sandbox.innerHTML = `
+          <div style="border-bottom:2px solid #1C1917;padding-bottom:10px;margin-bottom:14px;">
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#78716C;font-weight:700;margin-bottom:4px;">
+              Fiche de révision · ${todayFr}
+            </div>
+            <div style="font-size:21px;font-weight:800;color:#1C1917;line-height:1.25;">
+              ${escapeHtml(sheet.title)}
+            </div>
+          </div>
+          ${legendHtml}
+          <div class="sheet-typography" style="font-size:14px;line-height:1.68;">
+            ${contentClone.innerHTML}
+          </div>
+        `;
+
+        const safeFileName = `Fiche_${sheet.title
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .replace(/[^a-zA-Z0-9_-]+/g, '_')
+          .replace(/^_+|_+$/g, '')
+          .slice(0, 50) || 'Revision'}.pdf`;
+
+        try {
+          if (typeof html2pdf !== 'undefined') {
+            const opt = {
+              margin: [10, 10, 12, 10],
+              filename: safeFileName,
+              image: { type: 'jpeg', quality: 0.98 },
+              html2canvas: { scale: 2, useCORS: true, letterRendering: true },
+              jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+              pagebreak: { mode: ['css', 'legacy'] }
+            };
+            await html2pdf().set(opt).from(sandbox).save();
+            showToast(`📄 PDF « ${safeFileName} » téléchargé !`);
+          } else {
+            window.print();
+          }
+        } catch (err) {
+          console.error('Erreur export PDF :', err);
+          showToast('Ouverture de l’impression PDF du navigateur...');
+          window.print();
+        } finally {
+          statusEl.classList.add('hidden');
+          document.getElementById('modal-pdf-export').classList.add('hidden');
+        }
+      }
+
+      /* ======================================================================
+         9. HISTORIQUE ANNULER / RÉTABLIR
+         ====================================================================== */
+      function pushUndoSnapshot() {
+        const sheetContent = document.getElementById('sheet-content');
+        if (!sheetContent) return;
+        const current = sheetContent.innerHTML;
+        if (state.undoStack.length > 0 && state.undoStack[state.undoStack.length - 1] === current) return;
+        state.undoStack.push(current);
+        if (state.undoStack.length > 50) state.undoStack.shift();
+        state.redoStack = [];
+        updateUndoRedoButtons();
+      }
+
+      function performUndo() {
+        if (state.undoStack.length === 0) return;
+        const sheetContent = document.getElementById('sheet-content');
+        state.redoStack.push(sheetContent.innerHTML);
+        sheetContent.innerHTML = state.undoStack.pop();
+        commitSheetDomChange();
+        updateUndoRedoButtons();
+        showToast('↩️ Action annulée');
+      }
+
+      function performRedo() {
+        if (state.redoStack.length === 0) return;
+        const sheetContent = document.getElementById('sheet-content');
+        state.undoStack.push(sheetContent.innerHTML);
+        sheetContent.innerHTML = state.redoStack.pop();
+        commitSheetDomChange();
+        updateUndoRedoButtons();
+        showToast('↪️ Action rétablie');
+      }
+
+      function updateUndoRedoButtons() {
+        document.getElementById('btn-undo').disabled = state.undoStack.length === 0;
+        document.getElementById('btn-redo').disabled = state.redoStack.length === 0;
+      }
+
+      /* ======================================================================
+         10. TROUSSE À PINCEAUX & OUTIL ACTIF
+         ====================================================================== */
+      function renderPencilCase() {
+        const container = document.getElementById('brush-buttons-group');
+        container.innerHTML = BRUSH_DEFS.map((b) => {
+          const label = state.colorLabels[b.id] || b.defaultLabel;
+          const isActive = state.activeTool === b.id;
+          return `
+            <button type="button" data-tool="${b.id}"
+              title="Pinceau ${escapeHtml(label)} (Touche ${b.shortcut})"
+              class="brush-tool-btn flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-bold shrink-0 ${
+                isActive
+                  ? `is-active ${b.pillBg} ring-2 ring-stone-900/15`
+                  : 'bg-white border-stone-200 text-stone-700 hover:bg-stone-50'
+              }">
+              <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none">
+                <path d="M15.5 3.5L20.5 8.5L10 19H5V14L15.5 3.5Z" fill="${b.fill}" stroke="#1C1917" stroke-width="1.8" stroke-linejoin="round"/>
+                <path d="M13 6L18 11" stroke="#1C1917" stroke-width="1.6"/>
+                <path d="M3 21H11" stroke="${b.border}" stroke-width="2.6" stroke-linecap="round"/>
+              </svg>
+              <span>${escapeHtml(label)}</span>
+              <kbd class="hidden md:inline-block px-1.5 py-0.2 text-[10px] font-mono bg-black/5 text-stone-600 rounded">${b.shortcut}</kbd>
+            </button>
+          `;
+        }).join('');
+
+        container.querySelectorAll('[data-tool]').forEach((btn) => {
+          btn.addEventListener('click', () => selectTool(btn.dataset.tool));
+        });
+
+        const eraserBtn = document.getElementById('tool-btn-eraser');
+        const editBtn = document.getElementById('tool-btn-edit');
+
+        eraserBtn.classList.toggle('is-active', state.activeTool === 'eraser');
+        eraserBtn.classList.toggle('bg-rose-50', state.activeTool === 'eraser');
+        eraserBtn.classList.toggle('border-rose-400', state.activeTool === 'eraser');
+        eraserBtn.classList.toggle('text-rose-900', state.activeTool === 'eraser');
+        eraserBtn.classList.toggle('bg-white', state.activeTool !== 'eraser');
+
+        editBtn.classList.toggle('is-active', state.activeTool === 'edit');
+        editBtn.classList.toggle('bg-amber-50', state.activeTool === 'edit');
+        editBtn.classList.toggle('border-amber-400', state.activeTool === 'edit');
+        editBtn.classList.toggle('text-amber-950', state.activeTool === 'edit');
+        editBtn.classList.toggle('bg-white', state.activeTool !== 'edit');
+      }
+
+      function selectTool(toolId) {
+        clearCourseSearch();
+        state.activeTool = toolId;
+        document.body.dataset.tool = toolId;
+        document.body.classList.toggle('mode-eraser', toolId === 'eraser');
+
+        const paper = document.getElementById('sheet-paper');
+        const sheetContent = document.getElementById('sheet-content');
+        const editBanner = document.getElementById('edit-mode-banner');
+        const toolPill = document.getElementById('active-tool-pill');
+
+        if (toolId === 'edit') {
+          if (state.recallMode) toggleRecallMode(false);
+          if (state.focusColor) setFocusColor(null);
+          pushUndoSnapshot();
+          sheetContent.setAttribute('contenteditable', 'true');
+          paper.classList.remove('brush-cursor-enabled');
+          paper.style.removeProperty('--active-sheet-cursor');
+          editBanner.classList.remove('hidden');
+          toolPill.className = 'inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-950 border border-amber-300';
+          toolPill.textContent = '✍️ Mode édition du texte';
+          sheetContent.focus();
+        } else {
+          const wasEditing = sheetContent.getAttribute('contenteditable') === 'true';
+          sheetContent.setAttribute('contenteditable', 'false');
+          editBanner.classList.add('hidden');
+          paper.classList.add('brush-cursor-enabled');
+
+          if (wasEditing) commitSheetDomChange();
+
+          if (toolId === 'eraser') {
+            paper.style.setProperty('--active-sheet-cursor', getEraserCursorCss());
+            toolPill.className = 'inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-900 border border-rose-300';
+            toolPill.textContent = '🧽 Gomme active (cliquez ou balayez)';
+          } else {
+            const brush = BRUSH_DEFS.find(b => b.id === toolId) || BRUSH_DEFS[0];
+            const label = state.colorLabels[brush.id] || brush.defaultLabel;
+            paper.style.setProperty('--active-sheet-cursor', getBrushCursorCss(brush.fill, brush.border));
+            toolPill.className = `inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${brush.pillBg}`;
+            toolPill.textContent = `🖌️ Pinceau : ${label}`;
+          }
+        }
+
+        renderPencilCase();
+      }
+
+      /* ======================================================================
+         11. PANNEAUX LATÉRAUX : FICHES, RECHERCHE, SOMMAIRE, FOCUS & SYNTHÈSE
+         ====================================================================== */
+      function commitSheetDomChange() {
+        const sheet = getActiveSheet();
+        const sheetContent = document.getElementById('sheet-content');
+        if (!sheet || !sheetContent) return;
+
+        // Sauvegarder le HTML propre sans marques temporaires de recherche
+        const clone = sheetContent.cloneNode(true);
+        clone.querySelectorAll('mark.search-hit').forEach((m) => {
+          const p = m.parentNode;
+          while (m.firstChild) p.insertBefore(m.firstChild, m);
+          p.removeChild(m);
+        });
+        clone.normalize();
+
+        sheet.html = clone.innerHTML;
+        sheet.updatedAt = Date.now();
+        saveWorkspace();
+
+        buildTableOfContents();
+        renderRightRevisionPanels();
+      }
+
+      function renderSheetsSidebar() {
+        const container = document.getElementById('sheets-list-container');
+        document.getElementById('sheets-count-pill').textContent = state.sheets.length;
+
+        container.innerHTML = state.sheets.map((s) => {
+          const isCurrent = s.id === state.activeSheetId;
+          const dateLabel = new Date(s.updatedAt || Date.now()).toLocaleDateString('fr-FR', {
+            day: '2-digit',
+            month: 'short'
+          });
+          return `
+            <div class="flex items-center justify-between gap-1.5 p-2 rounded-xl border transition ${
+              isCurrent
+                ? 'bg-amber-50/90 border-amber-300 text-stone-950'
+                : 'bg-stone-50/70 border-transparent hover:bg-stone-100 text-stone-700'
+            }">
+              <button type="button" data-open-sheet="${s.id}" class="flex-1 min-w-0 text-left">
+                <p class="text-xs font-bold truncate">${escapeHtml(s.title)}</p>
+                <p class="text-[10px] text-stone-400">Modifiée le ${dateLabel}</p>
+              </button>
+              ${state.sheets.length > 1 ? `
+                <button type="button" data-ask-delete="${s.id}" title="Supprimer cette fiche"
+                  class="p-1.5 rounded-lg text-stone-400 hover:text-rose-600 hover:bg-rose-50 transition shrink-0">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+              ` : ''}
+            </div>
+          `;
+        }).join('');
+
+        container.querySelectorAll('[data-open-sheet]').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            switchActiveSheet(btn.dataset.openSheet);
+            closeMobileDrawers();
+          });
+        });
+
+        container.querySelectorAll('[data-ask-delete]').forEach((btn) => {
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const target = state.sheets.find(s => s.id === btn.dataset.askDelete);
+            if (!target) return;
+            openConfirmModal(
+              'Supprimer cette fiche ?',
+              `La fiche « ${target.title} » sera définitivement supprimée.`,
+              () => {
+                state.sheets = state.sheets.filter(s => s.id !== target.id);
+                if (state.activeSheetId === target.id) {
+                  state.activeSheetId = state.sheets[0].id;
+                }
+                saveWorkspace();
+                switchActiveSheet(state.activeSheetId);
+                showToast('Fiche supprimée.');
+              }
+            );
+          });
+        });
+      }
+
+      function buildTableOfContents() {
+        const sheetContent = document.getElementById('sheet-content');
+        const tocContainer = document.getElementById('toc-container');
+        const headings = Array.from(sheetContent.querySelectorAll('h1, h2, h3'));
+        document.getElementById('toc-count-pill').textContent = headings.length;
+
+        if (headings.length === 0) {
+          tocContainer.innerHTML = `<p class="text-xs text-stone-400 italic">Aucun titre détecté.</p>`;
+          return;
+        }
+
+        tocContainer.innerHTML = headings.map((h, i) => {
+          if (!h.id) h.id = `heading-${i}`;
+          const padClass = h.tagName === 'H3' ? 'pl-3.5 font-medium text-stone-600' : 'font-bold text-stone-800';
+          return `
+            <button type="button" data-scroll-heading="${h.id}"
+              class="w-full text-left px-2.5 py-1.5 rounded-lg text-xs truncate hover:bg-amber-50 hover:text-amber-950 transition ${padClass}">
+              ${escapeHtml(h.textContent)}
+            </button>
+          `;
+        }).join('');
+
+        tocContainer.querySelectorAll('[data-scroll-heading]').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const target = document.getElementById(btn.dataset.scrollHeading);
+            if (target) {
+              target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              closeMobileDrawers();
+            }
+          });
+        });
+      }
+
+      function setFocusColor(colorId) {
+        const sheetContent = document.getElementById('sheet-content');
+        const banner = document.getElementById('focus-mode-banner');
+        const bannerLabel = document.getElementById('focus-mode-label');
+
+        if (!colorId || state.focusColor === colorId) {
+          state.focusColor = null;
+          sheetContent.classList.remove('focus-active');
+          sheetContent.removeAttribute('data-focus-color');
+          banner.classList.add('hidden');
+        } else {
+          state.focusColor = colorId;
+          const label = state.colorLabels[colorId] || colorId;
+          sheetContent.classList.add('focus-active');
+          sheetContent.dataset.focusColor = colorId;
+          bannerLabel.innerHTML = `<strong>Mode Focus (${escapeHtml(label)}) :</strong> seuls ces passages sont mis en évidence.`;
+          banner.classList.remove('hidden');
+        }
+        renderRightRevisionPanels();
+      }
+
+      function renderRightRevisionPanels() {
+        const sheetContent = document.getElementById('sheet-content');
+        const colorNavList = document.getElementById('color-nav-list');
+        const synthesisContainer = document.getElementById('synthesis-list-container');
+
+        const grouped = { yellow: [], green: [], blue: [], pink: [], purple: [] };
+        let totalCount = 0;
+
+        sheetContent.querySelectorAll('mark.hl').forEach((mark, idx) => {
+          const cat = mark.dataset.hl;
+          if (grouped[cat]) {
+            mark.dataset.hlIdx = String(idx);
+            grouped[cat].push(mark);
+            totalCount++;
+          }
+        });
+
+        document.getElementById('sheet-meta-stats').textContent =
+          `${totalCount} surlignage${totalCount > 1 ? 's' : ''}`;
+        document.getElementById('synthesis-total-subtitle').textContent =
+          `${totalCount} passage${totalCount > 1 ? 's' : ''} surligné${totalCount > 1 ? 's' : ''}`;
+
+        // 1. Légende interactive (Compteur + Renommer + Mode Focus + Suivant)
+        colorNavList.innerHTML = BRUSH_DEFS.map((b) => {
+          const label = state.colorLabels[b.id] || b.defaultLabel;
+          const count = grouped[b.id].length;
+          const isFocused = state.focusColor === b.id;
+
+          return `
+            <div class="flex items-center justify-between gap-1 p-2 rounded-xl border transition ${
+              isFocused ? 'bg-stone-900 text-white border-stone-900' : 'bg-[#FAF9F6] border-stone-200/80 text-stone-800'
+            }">
+              <div class="flex items-center gap-1.5 min-w-0 flex-1">
+                <span class="w-3.5 h-3.5 rounded-full shrink-0 border" style="background:${b.fill}; border-color:${b.border}"></span>
+                <span class="text-xs font-bold truncate" title="${escapeHtml(label)}">${escapeHtml(label)}</span>
+                <button type="button" data-rename-color="${b.id}" title="Renommer cette couleur"
+                  class="text-[11px] px-1 rounded opacity-60 hover:opacity-100 transition">✎</button>
+              </div>
+
+              <div class="flex items-center gap-1 shrink-0">
+                <span class="text-[11px] font-mono font-bold px-1.5 py-0.5 rounded-md ${
+                  isFocused ? 'bg-white/15 text-white' : 'bg-white border border-stone-200 text-stone-700'
+                }">${count}</span>
+
+                <button type="button" data-focus-color-btn="${b.id}" ${count === 0 ? 'disabled' : ''}
+                  title="Mode Focus : isoler uniquement cette couleur"
+                  class="p-1 rounded-lg border text-[11px] disabled:opacity-35 disabled:pointer-events-none transition ${
+                    isFocused
+                      ? 'bg-amber-400 border-amber-400 text-stone-950 font-bold'
+                      : 'bg-white border-stone-200 text-stone-600 hover:bg-stone-100'
+                  }">👁</button>
+
+                <button type="button" data-next-color="${b.id}" ${count === 0 ? 'disabled' : ''}
+                  title="Aller au surlignage suivant"
+                  class="px-2 py-1 rounded-lg text-[11px] font-bold disabled:opacity-35 disabled:pointer-events-none transition ${
+                    isFocused
+                      ? 'bg-white/15 hover:bg-white/25 text-white'
+                      : 'bg-white hover:bg-amber-50 text-stone-800 border border-stone-200'
+                  }">Suivant ↓</button>
+              </div>
+            </div>
+          `;
+        }).join('');
+
+        colorNavList.querySelectorAll('[data-next-color]').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const cat = btn.dataset.nextColor;
+            const list = grouped[cat] || [];
+            if (list.length === 0) return;
+            state.cycleIndex[cat] = (state.cycleIndex[cat] + 1) % list.length;
+            focusHighlightOnSheet(list[state.cycleIndex[cat]]);
+            closeMobileDrawers();
+          });
+        });
+
+        colorNavList.querySelectorAll('[data-focus-color-btn]').forEach((btn) => {
+          btn.addEventListener('click', () => setFocusColor(btn.dataset.focusColorBtn));
+        });
+
+        colorNavList.querySelectorAll('[data-rename-color]').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const cat = btn.dataset.renameColor;
+            const row = btn.closest('div.flex.items-center.justify-between');
+            const currentLabel = state.colorLabels[cat] || '';
+            row.innerHTML = `
+              <form class="flex items-center gap-1.5 w-full">
+                <input type="text" value="${escapeHtml(currentLabel)}" maxlength="26"
+                  class="flex-1 min-w-0 px-2 py-1 rounded-lg bg-white border border-amber-500 text-xs font-bold text-stone-900 focus:outline-none" />
+                <button type="submit" class="px-2.5 py-1 rounded-lg bg-stone-900 text-white text-[11px] font-bold">OK</button>
+              </form>
+            `;
+            const form = row.querySelector('form');
+            const input = form.querySelector('input');
+            input.focus();
+            input.select();
+            form.addEventListener('submit', (e) => {
+              e.preventDefault();
+              const val = input.value.trim();
+              if (val) {
+                state.colorLabels[cat] = val;
+                saveWorkspace();
+                renderPencilCase();
+                if (state.activeTool === cat) selectTool(cat);
+              }
+              renderRightRevisionPanels();
+            });
+          });
+        });
+
+        // 2. Synthèse Express
+        if (totalCount === 0) {
+          synthesisContainer.innerHTML = `
+            <div class="p-4 rounded-xl border border-dashed border-stone-200 text-center text-xs text-stone-400 leading-relaxed">
+              Cliquez sur <strong>« ✨ Surligner l'essentiel »</strong> ou utilisez un pinceau sur la feuille pour générer automatiquement votre synthèse ici.
+            </div>
+          `;
+        } else {
+          synthesisContainer.innerHTML = BRUSH_DEFS.map((b) => {
+            const items = grouped[b.id];
+            if (items.length === 0) return '';
+            const label = state.colorLabels[b.id] || b.defaultLabel;
+            return `
+              <div class="rounded-xl border border-stone-200/90 overflow-hidden">
+                <div class="px-3 py-1.5 bg-[#FAF9F6] border-b border-stone-200/80 flex items-center justify-between">
+                  <div class="flex items-center gap-1.5">
+                    <span class="w-2.5 h-2.5 rounded-full" style="background:${b.fill}; border:1px solid ${b.border}"></span>
+                    <span class="text-[11px] font-extrabold text-stone-800">${escapeHtml(label)}</span>
+                  </div>
+                  <span class="text-[10px] font-mono text-stone-500">${items.length}</span>
+                </div>
+                <div class="divide-y divide-stone-100">
+                  ${items.map((markEl) => `
+                    <button type="button" data-jump-mark-idx="${markEl.dataset.hlIdx}"
+                      class="w-full text-left px-3 py-2 text-xs text-stone-700 hover:bg-amber-50/70 hover:text-stone-950 leading-snug transition">
+                      • ${escapeHtml(markEl.textContent)}
+                    </button>
+                  `).join('')}
+                </div>
+              </div>
+            `;
+          }).join('');
+
+          synthesisContainer.querySelectorAll('[data-jump-mark-idx]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+              const target = sheetContent.querySelector(`mark.hl[data-hl-idx="${btn.dataset.jumpMarkIdx}"]`);
+              if (target) {
+                focusHighlightOnSheet(target);
+                closeMobileDrawers();
+              }
+            });
+          });
+        }
+      }
+
+      function focusHighlightOnSheet(markEl) {
+        if (!markEl) return;
+        markEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        markEl.classList.remove('hl-locate-flash');
+        void markEl.offsetWidth;
+        markEl.classList.add('hl-locate-flash');
+      }
+
+      /* ======================================================================
+         12. RECHERCHE RAPIDE DANS LE COURS
+         ====================================================================== */
+      function clearCourseSearch() {
+        const sheetContent = document.getElementById('sheet-content');
+        if (!sheetContent) return;
+        const hits = sheetContent.querySelectorAll('mark.search-hit');
+        if (hits.length > 0) {
+          hits.forEach((h) => {
+            const p = h.parentNode;
+            while (h.firstChild) p.insertBefore(h.firstChild, h);
+            p.removeChild(h);
+          });
+          sheetContent.normalize();
+        }
+        state.searchHits = [];
+        state.currentSearchIdx = -1;
+        document.getElementById('search-hits-counter').textContent = '';
+        document.getElementById('btn-search-next').classList.add('hidden');
+        document.getElementById('btn-search-clear').classList.add('hidden');
+      }
+
+      function performCourseSearch(query) {
+        clearCourseSearch();
+        const q = (query || '').trim();
+        if (q.length < 2) return;
+
+        const sheetContent = document.getElementById('sheet-content');
+        const lowerQ = q.toLowerCase();
+        const walker = document.createTreeWalker(sheetContent, NodeFilter.SHOW_TEXT, null);
+        const textNodes = [];
+        let n;
+        while ((n = walker.nextNode())) {
+          if (n.nodeValue && n.nodeValue.toLowerCase().includes(lowerQ)) {
+            textNodes.push(n);
+          }
+        }
+
+        textNodes.forEach((tNode) => {
+          let current = tNode;
+          while (current && current.nodeValue) {
+            const idx = current.nodeValue.toLowerCase().indexOf(lowerQ);
+            if (idx === -1) break;
+            const after = current.splitText(idx);
+            const rest = after.splitText(q.length);
+            const hitMark = document.createElement('mark');
+            hitMark.className = 'search-hit';
+            after.parentNode.insertBefore(hitMark, after);
+            hitMark.appendChild(after);
+            state.searchHits.push(hitMark);
+            current = rest;
+          }
+        });
+
+        const counterEl = document.getElementById('search-hits-counter');
+        const nextBtn = document.getElementById('btn-search-next');
+        const clearBtn = document.getElementById('btn-search-clear');
+
+        clearBtn.classList.remove('hidden');
+        if (state.searchHits.length === 0) {
+          counterEl.textContent = '0';
+          return;
+        }
+
+        nextBtn.classList.remove('hidden');
+        jumpToNextSearchHit();
+      }
+
+      function jumpToNextSearchHit() {
+        if (state.searchHits.length === 0) return;
+        state.searchHits.forEach(h => h.classList.remove('is-current-hit'));
+        state.currentSearchIdx = (state.currentSearchIdx + 1) % state.searchHits.length;
+        const current = state.searchHits[state.currentSearchIdx];
+        current.classList.add('is-current-hit');
+        current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        document.getElementById('search-hits-counter').textContent = `${state.currentSearchIdx + 1}/${state.searchHits.length}`;
+      }
+
+      /* ======================================================================
+         13. COPIE SYNTHÈSE EXPRESS & TEST MÉMOIRE
+         ====================================================================== */
+      function copyFullSynthesis() {
+        const sheet = getActiveSheet();
+        const sheetContent = document.getElementById('sheet-content');
+        const grouped = { yellow: [], green: [], blue: [], pink: [], purple: [] };
+
+        sheetContent.querySelectorAll('mark.hl').forEach((m) => {
+          if (grouped[m.dataset.hl]) grouped[m.dataset.hl].push(m.textContent.trim());
+        });
+
+        const total = Object.values(grouped).reduce((acc, arr) => acc + arr.length, 0);
+        if (total === 0) {
+          showToast('Aucun surlignage à copier.');
+          return;
+        }
+
+        const out = [`SYNTHÈSE DE RÉVISION — ${sheet ? sheet.title.toUpperCase() : ''}`, ''];
+        BRUSH_DEFS.forEach((b) => {
+          const items = grouped[b.id];
+          if (items.length > 0) {
+            const label = state.colorLabels[b.id] || b.defaultLabel;
+            out.push(`■ ${label.toUpperCase()} (${items.length})`);
+            items.forEach(txt => out.push(`  • ${txt}`));
+            out.push('');
+          }
+        });
+
+        const helper = document.createElement('textarea');
+        helper.value = out.join('\n');
+        helper.style.position = 'fixed';
+        helper.style.opacity = '0';
+        document.body.appendChild(helper);
+        helper.select();
+        try {
+          document.execCommand('copy');
+          showToast('📋 Synthèse Express copiée !');
+        } catch (e) {
+          showToast('Impossible de copier automatiquement.');
+        }
+        document.body.removeChild(helper);
+      }
+
+      function toggleRecallMode(forceVal = null) {
+        state.recallMode = forceVal !== null ? forceVal : !state.recallMode;
+        const sheetContent = document.getElementById('sheet-content');
+        const banner = document.getElementById('recall-mode-banner');
+        const btn = document.getElementById('btn-toggle-recall');
+
+        sheetContent.querySelectorAll('mark.hl').forEach(m => m.classList.remove('recall-revealed'));
+
+        if (state.recallMode) {
+          if (state.activeTool === 'edit') selectTool('yellow');
+          if (state.focusColor) setFocusColor(null);
+          sheetContent.classList.add('recall-mode');
+          banner.classList.remove('hidden');
+          btn.classList.add('ring-2', 'ring-amber-500');
+          document.getElementById('btn-recall-reveal-all').textContent = 'Tout révéler';
+        } else {
+          sheetContent.classList.remove('recall-mode');
+          banner.classList.add('hidden');
+          btn.classList.remove('ring-2', 'ring-amber-500');
+        }
+      }
+
+      /* ======================================================================
+         14. GESTION DES PHOTOS IMPORTÉES DANS LA MODALE 📷 PHOTO → FICHE
+         ====================================================================== */
+      async function handleAddCoursePhotos(fileList) {
+        const files = Array.from(fileList || []).filter(f => f.type.startsWith('image/'));
+        if (files.length === 0) return;
+
+        for (const file of files) {
+          try {
+            const dataUrl = await normalizeImageFileToDataUrl(file);
+            state.uploadedPhotos.push({
+              id: uid('img'),
+              name: file.name,
+              dataUrl
+            });
+          } catch (err) {
+            showToast(`Impossible de charger ${file.name}`);
+          }
+        }
+        renderPhotoThumbnails();
+      }
+
+      function renderPhotoThumbnails() {
+        const wrapper = document.getElementById('photo-thumbnails-wrapper');
+        const grid = document.getElementById('photo-thumbnails-grid');
+        const countEl = document.getElementById('photo-pages-count');
+        const startBtn = document.getElementById('btn-start-transcribe');
+
+        const n = state.uploadedPhotos.length;
+        startBtn.disabled = n === 0;
+
+        if (n === 0) {
+          wrapper.classList.add('hidden');
+          grid.innerHTML = '';
+          return;
+        }
+
+        wrapper.classList.remove('hidden');
+        countEl.textContent = `${n} page${n > 1 ? 's' : ''} sélectionnée${n > 1 ? 's' : ''}`;
+
+        grid.innerHTML = state.uploadedPhotos.map((p, idx) => `
+          <div class="relative rounded-2xl border border-stone-200 bg-stone-50 overflow-hidden shadow-2xs group">
+            <img src="${p.dataUrl}" alt="Page ${idx + 1}" class="w-full h-28 object-cover" />
+            <div class="px-2 py-1.5 bg-white border-t border-stone-200 flex items-center justify-between gap-1">
+              <span class="text-[11px] font-extrabold text-stone-800">Page ${idx + 1}</span>
+              <div class="flex items-center gap-0.5">
+                <button type="button" data-move-photo-left="${idx}" ${idx === 0 ? 'disabled' : ''}
+                  title="Avancer cette page"
+                  class="px-1.5 py-0.5 rounded bg-stone-100 hover:bg-stone-200 text-stone-700 text-[10px] font-bold disabled:opacity-30">←</button>
+                <button type="button" data-move-photo-right="${idx}" ${idx === n - 1 ? 'disabled' : ''}
+                  title="Reculer cette page"
+                  class="px-1.5 py-0.5 rounded bg-stone-100 hover:bg-stone-200 text-stone-700 text-[10px] font-bold disabled:opacity-30">→</button>
+                <button type="button" data-remove-photo="${idx}" title="Retirer"
+                  class="px-1.5 py-0.5 rounded bg-rose-50 hover:bg-rose-100 text-rose-600 text-[10px] font-bold">✕</button>
+              </div>
+            </div>
+          </div>
+        `).join('');
+
+        grid.querySelectorAll('[data-move-photo-left]').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const i = Number(btn.dataset.movePhotoLeft);
+            if (i > 0) {
+              [state.uploadedPhotos[i - 1], state.uploadedPhotos[i]] = [state.uploadedPhotos[i], state.uploadedPhotos[i - 1]];
+              renderPhotoThumbnails();
+            }
+          });
+        });
+
+        grid.querySelectorAll('[data-move-photo-right]').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const i = Number(btn.dataset.movePhotoRight);
+            if (i < state.uploadedPhotos.length - 1) {
+              [state.uploadedPhotos[i + 1], state.uploadedPhotos[i]] = [state.uploadedPhotos[i], state.uploadedPhotos[i + 1]];
+              renderPhotoThumbnails();
+            }
+          });
+        });
+
+        grid.querySelectorAll('[data-remove-photo]').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const i = Number(btn.dataset.removePhoto);
+            state.uploadedPhotos.splice(i, 1);
+            renderPhotoThumbnails();
+          });
+        });
+      }
+
+      async function runPhotoToSheetWorkflow() {
+        if (state.uploadedPhotos.length === 0) return;
+
+        const progressBox = document.getElementById('ocr-progress-box');
+        const statusText = document.getElementById('ocr-progress-status');
+        const percentText = document.getElementById('ocr-progress-percent');
+        const barEl = document.getElementById('ocr-progress-bar');
+        const captionEl = document.getElementById('ocr-engine-caption');
+        const startBtn = document.getElementById('btn-start-transcribe');
+
+        const customTitle = document.getElementById('photo-sheet-title').value.trim();
+        const autoHighlight = document.getElementById('chk-auto-hl-after-ocr').checked;
+
+        startBtn.disabled = true;
+        progressBox.classList.remove('hidden');
+
+        const updateProgress = (label, pct, caption) => {
+          statusText.textContent = label;
+          percentText.textContent = `${pct} %`;
+          barEl.style.width = `${pct}%`;
+          if (caption) captionEl.textContent = caption;
+        };
+
+        try {
+          let result = null;
+          const engineMode = state.aiSettings.mode;
+
+          // 1. Tentative avec Gemini Vision si mode 'auto' ou 'gemini'
+          if (engineMode === 'auto' || engineMode === 'gemini') {
+            try {
+              updateProgress(
+                `Analyse intelligente de ${state.uploadedPhotos.length} page(s)...`,
+                35,
+                'Moteur : IA Vision Gemini (retranscription structurée)'
+              );
+              result = await transcribePhotosWithGemini(state.uploadedPhotos, customTitle);
+              updateProgress('Mise en page de la fiche...', 95);
+            } catch (geminiErr) {
+              if (engineMode === 'gemini') {
+                throw new Error('Clé API Gemini manquante ou invalide (configurez-la dans ⚙️ Mode IA ou passez en mode Automatique).');
+              }
+              // En mode 'auto', bascule fluide sur le lecteur OCR français Tesseract.js
+              updateProgress(
+                'Bascule sur le lecteur OCR français intégré...',
+                10,
+                'Moteur : OCR Français Hors-ligne (Tesseract.js)'
+              );
+            }
+          }
+
+          // 2. Moteur OCR Hors-ligne Tesseract.js ('fra')
+          if (!result) {
+            result = await transcribePhotosWithTesseract(
+              state.uploadedPhotos,
+              customTitle,
+              (msg, pct) => updateProgress(msg, pct, 'Moteur : OCR Français Hors-ligne (Tesseract.js)')
+            );
+          }
+
+          updateProgress('Fiche prête !', 100);
+
+          const newSheet = {
+            id: uid('sheet'),
+            title: result.title,
+            html: result.html,
+            updatedAt: Date.now()
+          };
+
+          state.sheets.unshift(newSheet);
+          document.getElementById('modal-photo-to-sheet').classList.add('hidden');
+          switchActiveSheet(newSheet.id);
+          selectTool('yellow');
+
+          showToast(`✅ Fiche créée (${result.engineUsed}) !`);
+
+          if (autoHighlight) {
+            await highlightEssentialOnSheet();
+          }
+        } catch (err) {
+          showToast(`⚠️ ${err.message || 'Erreur lors de la retranscription.'}`);
+        } finally {
+          progressBox.classList.add('hidden');
+          startBtn.disabled = state.uploadedPhotos.length === 0;
+        }
+      }
+
+      /* ======================================================================
+         15. CHANGEMENT DE FICHE & MODALE DE CONFIRMATION GÉNÉRIQUE
+         ====================================================================== */
+      function switchActiveSheet(sheetId) {
+        clearCourseSearch();
+        if (state.focusColor) setFocusColor(null);
+        if (state.recallMode) toggleRecallMode(false);
+
+        state.activeSheetId = sheetId;
+        state.undoStack = [];
+        state.redoStack = [];
+        state.cycleIndex = { yellow: -1, green: -1, blue: -1, pink: -1, purple: -1 };
+        updateUndoRedoButtons();
+        saveWorkspace();
+
+        const sheet = getActiveSheet();
+        if (!sheet) return;
+
+        document.getElementById('sheet-title-input').value = sheet.title;
+        document.getElementById('sheet-content').innerHTML = sheet.html;
+
+        renderSheetsSidebar();
+        buildTableOfContents();
+        renderRightRevisionPanels();
+      }
+
+      function openConfirmModal(title, desc, onAccept) {
+        document.getElementById('confirm-modal-title').textContent = title;
+        document.getElementById('confirm-modal-desc').textContent = desc;
+        state.confirmCallback = onAccept;
+        document.getElementById('modal-confirm-action').classList.remove('hidden');
+      }
+
+      function closeMobileDrawers() {
+        document.getElementById('left-sidebar').classList.add('-translate-x-full');
+        document.getElementById('right-sidebar').classList.add('translate-x-full');
+        document.getElementById('mobile-drawer-backdrop').classList.add('hidden');
+      }
+
+      function applyTypographyPreference() {
+        const sheetContent = document.getElementById('sheet-content');
+        const label = document.getElementById('font-style-label');
+        sheetContent.classList.toggle('font-editorial-serif', state.serifFont);
+        label.textContent = state.serifFont ? 'Livre (Serif)' : 'Moderne';
+      }
+
+      /* ======================================================================
+         16. INITIALISATION & BRANCHEMENT DE TOUS LES ÉVÉNEMENTS
+         ====================================================================== */
+      document.addEventListener('DOMContentLoaded', () => {
+        loadWorkspace();
+        updateAiStatusDot();
+        renderPencilCase();
+        applyTypographyPreference();
+        switchActiveSheet(state.activeSheetId);
+        selectTool('yellow');
+
+        const sheetContent = document.getElementById('sheet-content');
+
+        // --- Surlignage / Gomme instantané au relâchement de la souris ou du doigt ---
+        const handlePointerRelease = () => {
+          if (state.activeTool === 'edit') return;
+          applyToolToSelection(state.activeTool);
+        };
+
+        sheetContent.addEventListener('mouseup', handlePointerRelease);
+        sheetContent.addEventListener('touchend', () => setTimeout(handlePointerRelease, 40));
+
+        // --- Clic direct sur un <mark.hl> (Test Mémoire ou Gomme en un clic) ---
+        sheetContent.addEventListener('click', (e) => {
+          const mark = e.target.closest('mark.hl');
+          if (!mark) return;
+
+          if (state.recallMode) {
+            mark.classList.toggle('recall-revealed');
+            return;
+          }
+
+          if (state.activeTool === 'eraser') {
+            const sel = window.getSelection();
+            if (!sel || sel.isCollapsed) {
+              eraseSingleHighlightElement(mark);
+            }
+          }
+        });
+
+        // --- Sauvegarde en mode édition manuelle ---
+        sheetContent.addEventListener('input', () => {
+          if (state.activeTool === 'edit') commitSheetDomChange();
+        });
+
+        // --- Modification du titre de la fiche ---
+        document.getElementById('sheet-title-input').addEventListener('input', (e) => {
+          const sheet = getActiveSheet();
+          if (!sheet) return;
+          sheet.title = e.target.value.trim() || 'Fiche sans titre';
+          saveWorkspace();
+          renderSheetsSidebar();
+        });
+
+        // --- Sélecteur de police Moderne / Livre ---
+        document.getElementById('btn-toggle-serif').addEventListener('click', () => {
+          state.serifFont = !state.serifFont;
+          saveWorkspace();
+          applyTypographyPreference();
+        });
+
+        // --- Boutons Trousse & Historique ---
+        document.getElementById('tool-btn-eraser').addEventListener('click', () => selectTool('eraser'));
+        document.getElementById('tool-btn-edit').addEventListener('click', () => selectTool('edit'));
+        document.getElementById('btn-finish-editing').addEventListener('click', () => selectTool('yellow'));
+        document.getElementById('btn-undo').addEventListener('click', performUndo);
+        document.getElementById('btn-redo').addEventListener('click', performRedo);
+
+        document.getElementById('btn-clear-all-highlights').addEventListener('click', () => {
+          openConfirmModal(
+            'Effacer tous les surlignages ?',
+            'Tous les surlignages de cette fiche seront retirés (annulable avec Ctrl+Z).',
+            clearAllHighlightsOnSheet
+          );
+        });
+
+        // --- Raccourcis clavier (1..5, E, Ctrl+Z, Ctrl+Y) ---
+        document.addEventListener('keydown', (e) => {
+          const activeEl = document.activeElement;
+          const isTyping =
+            activeEl &&
+            (activeEl.tagName === 'INPUT' ||
+              activeEl.tagName === 'TEXTAREA' ||
+              activeEl.isContentEditable);
+
+          if ((e.ctrlKey || e.metaKey) && !isTyping) {
+            if (e.key.toLowerCase() === 'z' && !e.shiftKey) {
+              e.preventDefault();
+              performUndo();
+              return;
+            }
+            if (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey)) {
+              e.preventDefault();
+              performRedo();
+              return;
+            }
+          }
+
+          if (isTyping) return;
+
+          if (e.key === '1') selectTool('yellow');
+          else if (e.key === '2') selectTool('green');
+          else if (e.key === '3') selectTool('blue');
+          else if (e.key === '4') selectTool('pink');
+          else if (e.key === '5') selectTool('purple');
+          else if (e.key.toLowerCase() === 'e') selectTool('eraser');
+        });
+
+        // --- Surlignage automatique de l'essentiel ---
+        document.getElementById('btn-auto-highlight-essential').addEventListener('click', highlightEssentialOnSheet);
+
+        // --- Modale 📷 Photo de cours → Fiche ---
+        const photoModal = document.getElementById('modal-photo-to-sheet');
+        const openPhotoModal = () => {
+          state.uploadedPhotos = [];
+          document.getElementById('photo-sheet-title').value = '';
+          renderPhotoThumbnails();
+          photoModal.classList.remove('hidden');
+        };
+        const closePhotoModal = () => photoModal.classList.add('hidden');
+
+        document.getElementById('btn-open-photo-modal').addEventListener('click', openPhotoModal);
+        document.getElementById('btn-close-photo-modal').addEventListener('click', closePhotoModal);
+        document.getElementById('btn-cancel-photo-modal').addEventListener('click', closePhotoModal);
+        photoModal.addEventListener('click', (e) => {
+          if (e.target === photoModal) closePhotoModal();
+        });
+
+        document.getElementById('input-photo-files').addEventListener('change', (e) => {
+          handleAddCoursePhotos(e.target.files);
+          e.target.value = '';
+        });
+        document.getElementById('input-photo-camera').addEventListener('change', (e) => {
+          handleAddCoursePhotos(e.target.files);
+          e.target.value = '';
+        });
+
+        // Glisser-déposer sur la dropzone photo
+        const dropzone = document.getElementById('photo-dropzone');
+        dropzone.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          dropzone.classList.add('border-amber-500', 'bg-amber-50/40');
+        });
+        dropzone.addEventListener('dragleave', () => {
+          dropzone.classList.remove('border-amber-500', 'bg-amber-50/40');
+        });
+        dropzone.addEventListener('drop', (e) => {
+          e.preventDefault();
+          dropzone.classList.remove('border-amber-500', 'bg-amber-50/40');
+          if (e.dataTransfer?.files) handleAddCoursePhotos(e.dataTransfer.files);
+        });
+
+        document.getElementById('btn-clear-photos').addEventListener('click', () => {
+          state.uploadedPhotos = [];
+          renderPhotoThumbnails();
+        });
+        document.getElementById('btn-start-transcribe').addEventListener('click', runPhotoToSheetWorkflow);
+
+        // --- Modale + Nouvelle fiche texte ---
+        const textModal = document.getElementById('modal-new-text-sheet');
+        const openTextModal = () => {
+          document.getElementById('new-sheet-title').value = '';
+          document.getElementById('new-sheet-raw-text').value = '';
+          textModal.classList.remove('hidden');
+          document.getElementById('new-sheet-title').focus();
+        };
+        const closeTextModal = () => textModal.classList.add('hidden');
+
+        document.getElementById('btn-open-text-modal').addEventListener('click', openTextModal);
+        document.getElementById('btn-close-text-modal').addEventListener('click', closeTextModal);
+        document.getElementById('btn-cancel-text-modal').addEventListener('click', closeTextModal);
+        document.getElementById('btn-switch-to-text-modal').addEventListener('click', () => {
+          closePhotoModal();
+          openTextModal();
+        });
+        textModal.addEventListener('click', (e) => {
+          if (e.target === textModal) closeTextModal();
+        });
+
+        document.getElementById('import-file-input').addEventListener('change', async (e) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          try {
+            const txt = await file.text();
+            const titleEl = document.getElementById('new-sheet-title');
+            if (!titleEl.value.trim()) titleEl.value = file.name.replace(/\.[^/.]+$/, '');
+            document.getElementById('new-sheet-raw-text').value = txt;
+            showToast(`📄 Fichier « ${file.name} » chargé.`);
+          } catch (err) {
+            showToast('Lecture du fichier impossible.');
+          } finally {
+            e.target.value = '';
+          }
+        });
+
+        document.getElementById('btn-fill-demo-text').addEventListener('click', () => {
+          document.getElementById('new-sheet-title').value = DEMO_SHEET.title;
+          document.getElementById('new-sheet-raw-text').value = DEMO_SHEET.rawText;
+        });
+
+        document.getElementById('btn-create-sheet-submit').addEventListener('click', async () => {
+          const titleVal = document.getElementById('new-sheet-title').value.trim() || `Fiche #${state.sheets.length + 1}`;
+          const rawVal = document.getElementById('new-sheet-raw-text').value;
+          const autoHl = document.getElementById('chk-auto-hl-after-text').checked;
+
+          const created = {
+            id: uid('sheet'),
+            title: titleVal,
+            html: formatRawCourseToHtml(rawVal, true),
+            updatedAt: Date.now()
+          };
+          state.sheets.unshift(created);
+          closeTextModal();
+          switchActiveSheet(created.id);
+          selectTool('yellow');
+          showToast(`✅ Fiche « ${titleVal} » créée !`);
+
+          if (autoHl) {
+            await highlightEssentialOnSheet();
+          }
+        });
+
+        // --- Modale 📄 Télécharger PDF ---
+        const pdfModal = document.getElementById('modal-pdf-export');
+        const openPdfModal = () => {
+          if (state.recallMode) toggleRecallMode(false);
+          pdfModal.classList.remove('hidden');
+        };
+        document.getElementById('btn-open-pdf-modal').addEventListener('click', openPdfModal);
+        document.getElementById('btn-quick-pdf').addEventListener('click', openPdfModal);
+        document.getElementById('btn-close-pdf-modal').addEventListener('click', () => pdfModal.classList.add('hidden'));
+        pdfModal.addEventListener('click', (e) => {
+          if (e.target === pdfModal) pdfModal.classList.add('hidden');
+        });
+        document.getElementById('btn-download-pdf-colored').addEventListener('click', () => exportSheetToPdf(true));
+        document.getElementById('btn-download-pdf-blank').addEventListener('click', () => exportSheetToPdf(false));
+
+        // --- Modale ⚙️ Mode IA ---
+        const aiModal = document.getElementById('modal-ai-settings');
+        document.getElementById('btn-open-ai-settings').addEventListener('click', () => {
+          document.getElementById('select-ai-engine-mode').value = state.aiSettings.mode;
+          document.getElementById('input-gemini-api-key').value = state.aiSettings.apiKey || '';
+          aiModal.classList.remove('hidden');
+        });
+        document.getElementById('btn-close-ai-modal').addEventListener('click', () => aiModal.classList.add('hidden'));
+        document.getElementById('btn-cancel-ai-modal').addEventListener('click', () => aiModal.classList.add('hidden'));
+        aiModal.addEventListener('click', (e) => {
+          if (e.target === aiModal) aiModal.classList.add('hidden');
+        });
+        document.getElementById('btn-save-ai-settings').addEventListener('click', () => {
+          state.aiSettings.mode = document.getElementById('select-ai-engine-mode').value;
+          state.aiSettings.apiKey = document.getElementById('input-gemini-api-key').value.trim();
+          saveAiSettings();
+          aiModal.classList.add('hidden');
+          showToast('⚙️ Paramètres du moteur IA enregistrés.');
+        });
+
+        // --- Modale de confirmation générique ---
+        const confirmModal = document.getElementById('modal-confirm-action');
+        document.getElementById('btn-confirm-cancel').addEventListener('click', () => {
+          state.confirmCallback = null;
+          confirmModal.classList.add('hidden');
+        });
+        document.getElementById('btn-confirm-accept').addEventListener('click', () => {
+          const cb = state.confirmCallback;
+          state.confirmCallback = null;
+          confirmModal.classList.add('hidden');
+          if (typeof cb === 'function') cb();
+        });
+
+        // --- Outils révision droite & recherche gauche ---
+        document.getElementById('btn-exit-focus').addEventListener('click', () => setFocusColor(null));
+        document.getElementById('btn-toggle-recall').addEventListener('click', () => toggleRecallMode());
+        document.getElementById('btn-recall-quit').addEventListener('click', () => toggleRecallMode(false));
+        document.getElementById('btn-recall-reveal-all').addEventListener('click', (e) => {
+          const marks = sheetContent.querySelectorAll('mark.hl');
+          const anyHidden = Array.from(marks).some(m => !m.classList.contains('recall-revealed'));
+          marks.forEach(m => m.classList.toggle('recall-revealed', anyHidden));
+          e.target.textContent = anyHidden ? 'Tout masquer' : 'Tout révéler';
+        });
+
+        document.getElementById('btn-copy-synthesis').addEventListener('click', copyFullSynthesis);
+
+        const searchInput = document.getElementById('course-search-input');
+        searchInput.addEventListener('input', (e) => performCourseSearch(e.target.value));
+        document.getElementById('btn-search-next').addEventListener('click', jumpToNextSearchHit);
+        document.getElementById('btn-search-clear').addEventListener('click', () => {
+          searchInput.value = '';
+          clearCourseSearch();
+        });
+
+        // --- Tiroirs mobiles ---
+        const backdrop = document.getElementById('mobile-drawer-backdrop');
+        document.getElementById('btn-open-left-drawer').addEventListener('click', () => {
+          document.getElementById('left-sidebar').classList.remove('-translate-x-full');
+          backdrop.classList.remove('hidden');
+        });
+        document.getElementById('btn-open-right-drawer').addEventListener('click', () => {
+          document.getElementById('right-sidebar').classList.remove('translate-x-full');
+          backdrop.classList.remove('hidden');
+        });
+        document.getElementById('btn-close-left-drawer').addEventListener('click', closeMobileDrawers);
+        document.getElementById('btn-close-right-drawer').addEventListener('click', closeMobileDrawers);
+        backdrop.addEventListener('click', closeMobileDrawers);
+      });
+    })();
+  </script>
+</body>
+</html>
